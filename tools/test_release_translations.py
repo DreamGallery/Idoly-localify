@@ -120,12 +120,4 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'single-line'):
                 release.configure_api({})
 
-    def test_api_summary_contains_no_key_and_escapes_model_markup(self):
-        summary = self.root / 'summary.md'
-        with patch.dict(release.os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'OPENAI_API_KEY': 'private-key'}, clear=True):
-            release.write_api_summary({'api_base': 'https://example.test/v1', 'model': '<model>'})
-        self.assertNotIn('private-key', summary.read_text())
-        self.assertIn('&lt;model&gt;', summary.read_text())
-
-
 if __name__ == '__main__': unittest.main()

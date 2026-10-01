@@ -165,15 +165,6 @@ def configure_api(config):
     return {'api_base': base, 'model': model}
 
 
-def write_api_summary(api):
-    path = os.environ.get('GITHUB_STEP_SUMMARY')
-    if path:
-        import html
-        with Path(path).open('a', encoding='utf-8') as stream:
-            stream.write('### Translation API configuration\n\n<pre>' +
-                         html.escape(json.dumps(api, ensure_ascii=False, indent=2)) + '</pre>\n')
-
-
 def main():
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--config', type=Path)
@@ -218,8 +209,7 @@ def main():
                       ('IDOLY_OCTO_SETTINGS_FILE', 'octo_settings'),
                       ('ANDROID_HOME', 'android_home'), ('JAVA_HOME', 'java_home')]:
         if config.get(key): os.environ[name] = str(config[key])
-    api = configure_api(config)
-    write_api_summary(api)
+    configure_api(config)
     for key in ('toolkit_config', 'firebase_settings'):
         path = config.get(key)
         if not path or not Path(path).is_file(): raise ValueError(f'Runner config requires existing {key}')
@@ -240,7 +230,7 @@ def main():
     run([args.python, '-c', 'import UnityPy, fontTools, requests, Crypto, google.protobuf'])
     run([args.api_python, '-c', 'import grpc, google.protobuf'])
     if args.preflight_only:
-        print(json.dumps({'preflight': 'passed', 'publishing': False, **api}))
+        print(json.dumps({'preflight': 'passed', 'publishing': False}))
         return
     project, work = args.project.resolve(), args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -335,7 +325,7 @@ def main():
         results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run))
     results.append(publish(args.repository, 'text-' + manifest['version'],
                            [output / 'text-update.zip', output / 'manifest.json'], True, args.dry_run))
-    report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run, **api,
+    report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run,
               'releases': results, 'source_changed_files': len(changed), 'source_commit': data_commit, 'archive_sha256': manifest['archive']['sha256']}
     (work / 'release-report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
