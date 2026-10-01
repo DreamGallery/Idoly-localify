@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "game_version": "6.0.2",
+  "texture_entry": "assets/bin/Data/00000000000000000000000000000000",
+  "source_sha256": "48e61ed38e098d5b9464b6d21a06879a01c39259d584e0ea11c36ae632ccc913",
+  "atlases": [
+    {
+      "name": "HomeAtlas",
+      "entry": "assets/bin/Data/50ab47f1baed64ffc923a7cbca109d9a",
+      "texture_id": 19
+    },
+    {
+      "name": "GachaAtlas",
+      "entry": "assets/bin/Data/93223bc5b1e044126b2284239d290662",
+      "texture_id": 24
+    }
+  ],
+  "buttons": [
+    {
+      "sprite": "home_gallery",
+      "entry": "assets/bin/Data/48ae1661791bb4f919a61f95997428e9",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "展示柜",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_new_story",
+      "entry": "assets/bin/Data/9335938c12a4a402da99d09da7c133ec",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "最新话",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_league",
+      "entry": "assets/bin/Data/34720c2e394634bf2b2f8cbec6f51945",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "V联赛",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_friend_code",
+      "entry": "assets/bin/Data/0b347712d9d0a4bd4927b6c2000da8ff",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "邀请码",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_guild",
+      "entry": "assets/bin/Data/16a65c4db87054880a58132c06e391c8",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "签到",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_icon_roulette",
+      "entry": "assets/bin/Data/5bacfc219e4394d0f814d31606333a15",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "转盘",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_gift",
+      "entry": "assets/bin/Data/c9ea5fce491b842d487678b954a703be",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "礼物",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_login_bonus",
+      "entry": "assets/bin/Data/df8df258f611a4d5eb279103f9f2be5d",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "奖励",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_mission",
+      "entry": "assets/bin/Data/501e376bed5594df28041b0df3c8a8b2",
+      "atlas": "HomeAtlas",
+      "erase_from_y": 78,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "任务",
+          "y": 81
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "gacha_premium_icon",
+      "entry": "assets/bin/Data/3bb87ea8afbf740cca487aa87e200831",
+      "atlas": "GachaAtlas",
+      "erase_from_y": 60,
+      "font_size": 22,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "高级",
+          "y": 64
+        },
+        {
+          "text": "扭蛋",
+          "y": 91
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "gacha_item_icon",
+      "entry": "assets/bin/Data/28d0eb78d7e574479b0590d1d40f4aea",
+      "atlas": "GachaAtlas",
+      "erase_from_y": 60,
+      "font_size": 22,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "辅助券",
+          "y": 64
+        },
+        {
+          "text": "扭蛋",
+          "y": 91
+        }
+      ],
+      "clear_padding": 2
+    }
+  ]
+}

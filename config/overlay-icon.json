@@ -1,0 +1,30 @@
+{
+  "source": "https://idolypride.jp/shared/img/common/favicon.ico",
+  "artwork": "config/overlay-icon.svg",
+  "renderer": "app/src/main/java/io/github/dreamgallery/idoly/localify/LocalifyOverlayUi.java#IpIconDrawable",
+  "conversion": "Hand-traced vector approximation of the official favicon IP lettering; Canvas paths match SVG artwork, without bitmap scaling or font rendering",
+  "viewport": [
+    48,
+    48
+  ],
+  "background": "#3034ff",
+  "foreground": "#ffffff",
+  "shape": "circle",
+  "lettering_offset": [
+    -1,
+    0
+  ],
+  "lettering_bounds": [
+    9,
+    9,
+    39,
+    39
+  ],
+  "outer_ring": {
+    "color": "#ffffff",
+    "opacity": 0.4,
+    "width": 3,
+    "outer_radius": 24,
+    "inner_radius": 21
+  }
+}

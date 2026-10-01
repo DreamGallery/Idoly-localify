@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="192" height="192">
+  <title>IP floating tool icon — hand-traced favicon approximation</title>
+  <circle cx="24" cy="24" r="24" fill="#fff" fill-opacity="0.4"/>
+  <circle cx="24" cy="24" r="21" fill="#3034ff"/>
+  <path transform="translate(-1 0)" fill="#fff" d="M10 9H15V39H10Z M20 9H31.5C36.5 9 40 12.5 40 17.5C40 22.5 36.5 26 31.5 26H25V39H20V21H31.5C33.6 21 35 19.6 35 17.5C35 15.4 33.6 14 31.5 14H20Z"/>
+</svg>

@@ -1,0 +1,78 @@
+# 游戏内文本更新
+
+进入游戏后，点击屏幕边缘露出的按钮展开本地化工具。按钮松开后吸附最近的左右边缘；折叠时将 48 dp 按钮收进边缘，只露出约三分之一（16 dp），闲置 3 秒后变为半透明。拖动时完整显示，展开时整块面板回到屏幕内，并记住停靠方向及高度。不需要系统悬浮窗权限。默认在剧情播放时自动隐藏，结束或退出剧情后恢复，可在插件「详细设置」关闭此功能。手动选择「临时隐藏悬浮工具」后，将游戏切到后台再返回即可恢复（剧情自动隐藏仍然生效）。游戏设置页不再添加恢复按钮，自动隐藏不会停止文本采集。
+
+悬浮窗只保留「重新载入本地文本」「开始／停止采集」「详细设置」三个入口。「详细设置」在游戏内打开全屏页面，集中放置在线更新、更新地址、字体参数、采集说明和隐藏工具。字体场景及参数列表也使用全屏；预览参数后返回游戏查看效果，再次进入可保存或取消。具体功能：
+
+- **重新载入本地字典**：读取游戏外部文件目录的 `idoly-localify/dict.json`，并重新读取同目录的 `web-notice.json`。适合通过 ADB 或文件管理器手动放入更新文件后使用。
+- **检查在线更新**：从设置好的 HTTPS 清单下载文本文件、校验 SHA-256，并应用有效的新字典。
+- **设置更新地址**：保存清单 URL 到游戏外部文件目录的 `idoly-localify/hot-update.json`。无需账号令牌。
+- **调整游戏字体**：只对已识别控件按场景编辑字号、描边、行距等参数，先预览，再选择保存或取消预览。仅允许修改配置中的 `adjust` 字段；原生代码校验完整配置后才应用。
+- **采集未翻译文本**：手动开始或停止，只把运行时未命中的文本写入本机 `idoly-localify/capture/` 的本次会话 JSONL 文件。采集中折叠按钮变为红色「采」。停止后将文本、布局与完整性状态三份文件校验后导出到系统的 `下载/Idoly-localify/` 文件夹。达到 16 MiB 联合上限或发生写入错误时明确显示“已导出部分采集”；导出失败会清理本次创建的下载项并保留原始记录。Android 9 暂不支持自动导出。默认关闭，不是视频录制，也不会上传。
+
+## 采集完整性
+
+每次停止会冻结本次状态，生成 `capture-时间戳.status.json`，与同名 `.jsonl`、`.layout.jsonl` 配套。`schema_version` 为 1；`text_file` 绑定原始会话文件名，`stopped` 表示已停止，`complete` 表示没有已知丢失。`truncated`、`write_failed`、`dropped_records` 分别标记容量截断、写入错误及已检测到的丢弃尝试数。达到上限或首次写入失败后立即停止后续采集工作（按钮仍可停止并导出），不逐帧重复序列化或统计后续遗漏。`bytes_written`、`text_records`、`layout_records` 只累计成功写入；`exported_*_bytes` 是导出文件实际大小，`file_size_mismatch` 表示实际大小与成功写入计数不一致。`jsonl_may_be_incomplete=true` 表示写入失败或大小不符，JSONL 末行可能残缺；导入器不得直接认定每一行都是完整 JSON。状态文件导出失败时不会提示完整成功。
+
+本地审计须读取对应状态文件：`complete=false` 的记录只能作为部分证据；缺少状态文件的旧采集完整性未知，不能声称整场采集完整。即使 `complete=true`，也只证明此次采集没有检测到截断/写入丢失，不表示游戏全部页面或控件均已覆盖。新会话清空计数与错误状态，保留上一会话原始文件。
+
+`exported_text_file`、`exported_layout_file` 使用下载目录提供者返回的实际文件名，重复导出时允许自动改名；`text_sha256`、`layout_sha256` 绑定经过写后读回校验的文件内容。审计应同时核对实际名称、大小、摘要及记录数，避免将不同会话或被修改的文件混在一起。
+
+将三份导出文件放在同一目录后，运行 `python3 tools/check_capture_export.py <状态文件.status.json>`。工具只输出完整性和记录数，不显示或上传文本；仅完整且校验通过时返回 0，部分、缺少状态或校验失败时返回 2。旧采集仍可人工排查具体条目，但不能因此认定其完整。
+
+文本字典更新后，新渲染的文字会使用新数据；已显示且未被游戏再次改写的 TMP 标签在下次重绘时刷新。已打开的公告正文需要关闭后重新打开，才会使用新的页面译文。剧情 TXT 资源在游戏下一次加载对应资源时生效。MasterDB 中已经载入的记录需要重启游戏才能全部刷新。
+
+## 发布清单
+
+插件默认更新地址：
+
+```text
+https://github.com/DreamGallery/Idoly-localify-translations/releases/latest/download/manifest.json
+```
+
+也可设置自己的 HTTPS 清单地址。允许最多 5 次 HTTPS 重定向，拒绝降级为 HTTP、带账号信息或片段的地址。不会发送游戏账号数据。
+
+### GitHub Release 更新包（插件 0.2.0 起）
+
+每天北京时间 23:00 的工作流在翻译仓库运行，也可手动启动。抓取新增原文、复用已有译文、完成模型初译、导入校对完成稿后，校验并打包；有未完成译文或校验失败时不发布。人工剧情标题按对应脚本关联到 MasterDB。工作流及服务器配置见[翻译仓库](https://github.com/DreamGallery/Idoly-localify-translations)。
+
+每次文本发布包含 `manifest.json` 和 `text-update.zip`。ZIP 条目名与清单 `files` 键完全一致；压缩包及每份文件均校验 SHA-256。下例仅展示结构，实际清单由工具生成：
+
+```json
+{
+  "schema_version": 2,
+  "version": "content-hash",
+  "archive": {
+    "url": "https://github.com/OWNER/REPO/releases/download/text-content-hash/text-update.zip",
+    "sha256": "<压缩包的64位SHA-256>"
+  },
+  "files": {
+    "dict.json": {"sha256": "<文件的64位SHA-256>"},
+    "web-notice.json": {"sha256": "<文件的64位SHA-256>"},
+    "master-blobs.bin": {"sha256": "<文件的64位SHA-256>"},
+    "resource/adv_main_01_01_01.txt": {"sha256": "<文件的64位SHA-256>"}
+  }
+}
+```
+
+所有条目通过检查后才事务替换有变化的本地文件；拒绝重复、多余、缺失条目、非法路径、超限及校验失败。未列入清单的本地文件保留。备份与恢复记录支持更新过程中进程退出后的恢复。
+
+`dict.json` 必需；公告、剧情和 MasterDB 补丁可选。MasterDB 更新后需要重启游戏，仍按完整原始记录字节匹配；游戏原文变化后旧补丁不会凭近似文本套用。
+
+插件 APK 单独按版本发布，仅 `versionName` 更新时构建，且不占用文本发布的 latest。文本更新入口不安装 APK、字体或可执行代码。
+
+### 兼容静态文件方式
+
+不使用 ZIP 时省略 `schema_version` 与 `archive`，每个 `files` 条目填写 HTTPS `url` 和 `sha256`：
+
+```sh
+python3 tools/pipeline.py build
+python3 tools/build_text_update.py --base-url https://example.org/idoly \
+  --include-stories --output-dir .analysis/text-update-release
+```
+
+先上传生成的 `objects/`，再更新 `manifest.json`；旧清单引用的文件应保留。
+
+### 限制
+
+清单最大 4 MiB、最多 8192 文件；字典 64 MiB、公告词典 32 MiB、MasterDB 补丁 256 MiB、单个剧情 8 MiB。压缩包下载及总解压量各最多 1 GiB。只允许 `dict.json`、`web-notice.json`、`master-blobs.bin` 和 `resource/adv_*.txt`。

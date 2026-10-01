@@ -1,0 +1,563 @@
+{
+  "schema_version": 1,
+  "texture_entry": "assets/bin/Data/00000000000000000000000000000000",
+  "source_sha256": "48e61ed38e098d5b9464b6d21a06879a01c39259d584e0ea11c36ae632ccc913",
+  "font_sha256": "085a738ec5b4020607867b1dc9a65fd32b0465a74ac2a849ed4c579169e8bd28",
+  "fill_rgba": [
+    253,
+    60,
+    180,
+    255
+  ],
+  "white_rgba": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "labels": [
+    {
+      "sprite": "grid_list_select",
+      "entry": "assets/bin/Data/534689407d2b04772bd983b80d76a59a",
+      "source_sha256": "451b6c609d1d73e42cfd784df1475f82d21f617b699be709e0a9e16fdaef88e4",
+      "packed_box": [
+        1340,
+        1310,
+        1476,
+        1368
+      ],
+      "text": "已选择",
+      "orientation": "horizontal",
+      "font_size": 39,
+      "min_font_size": 30,
+      "white_stroke": 3,
+      "outer_stroke": 1.5,
+      "glyph_gap": 1,
+      "mesh_margin": 1,
+      "atlas": "CommonAtlas",
+      "clear_padding": 2
+    },
+    {
+      "sprite": "grid_list_select_vertical",
+      "entry": "assets/bin/Data/ffda78dbc308644aab9f4ed66e2a3b63",
+      "source_sha256": "40e0da3261dd90cfefb6d4ff5dfb503bd6f5b2731c53295da3bf5be22e450994",
+      "packed_box": [
+        1441,
+        1555,
+        1500,
+        1693
+      ],
+      "text": "已选择",
+      "orientation": "vertical",
+      "font_size": 39,
+      "min_font_size": 30,
+      "white_stroke": 3,
+      "outer_stroke": 1.5,
+      "glyph_gap": 1,
+      "mesh_margin": 1,
+      "atlas": "CommonAtlas",
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_button_start",
+      "entry": "assets/bin/Data/0628ec0f114b549dca39a1f73bf2bad9",
+      "source_sha256": "c6eb74984ed3f4214613c9974cdb499d72f9f9ccd80e388f19759fc9154ad0f7",
+      "packed_box": [
+        767,
+        815,
+        957,
+        862
+      ],
+      "atlas": "LoveAtlas",
+      "text": "开始",
+      "orientation": "horizontal",
+      "font_size": 42,
+      "min_font_size": 42,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/3c939281a9da0418d8e1a13770d44231",
+          "source_sha256": "916326021365c52164b67d51614ffee49dfc3e2136e5019fc02f285dd32d9633",
+          "image_path_id": 219
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_playing",
+      "entry": "assets/bin/Data/46e49212504234bc6ad32d705f445415",
+      "source_sha256": "57a7f27207c5d061b61b8ae02fbae9682fb700d2a8ff223dd302c47023c90ae5",
+      "packed_box": [
+        657,
+        418,
+        893,
+        465
+      ],
+      "atlas": "LoveAtlas",
+      "text": "继续",
+      "orientation": "horizontal",
+      "font_size": 42,
+      "min_font_size": 42,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/3c939281a9da0418d8e1a13770d44231",
+          "source_sha256": "916326021365c52164b67d51614ffee49dfc3e2136e5019fc02f285dd32d9633",
+          "image_path_id": 266
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_status",
+      "entry": "assets/bin/Data/55615b35be7684cc1a419d518c7c9295",
+      "source_sha256": "1fa5bf92c95dcccb964ccde9dbe27263f321963c6f90c3316dcab08ddf8112cf",
+      "packed_box": [
+        390,
+        77,
+        581,
+        115
+      ],
+      "atlas": "LoveAtlas",
+      "text": "状态",
+      "orientation": "horizontal",
+      "font_size": 36,
+      "min_font_size": 36,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1327
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_present",
+      "entry": "assets/bin/Data/73fc9b47a2f76409e848814278a4ad4f",
+      "source_sha256": "6caae7516ce922453a63eaeee9ec1524d3a837a4de5f75db3a32ed20c1e25a2b",
+      "packed_box": [
+        703,
+        317,
+        895,
+        357
+      ],
+      "atlas": "LoveAtlas",
+      "text": "礼物",
+      "orientation": "horizontal",
+      "font_size": 36,
+      "min_font_size": 36,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1342
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_mission",
+      "entry": "assets/bin/Data/78d3c6e343bc94136bcd6ff100511aba",
+      "source_sha256": "1b6bd29460eb53791b9a7f359811d3097b15ecd701b010b9da366ee05152e30a",
+      "packed_box": [
+        801,
+        549,
+        881,
+        589
+      ],
+      "atlas": "LoveAtlas",
+      "text": "课题",
+      "orientation": "horizontal",
+      "font_size": 36,
+      "min_font_size": 36,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1371
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_setting",
+      "entry": "assets/bin/Data/86b1ea6769b6f4101b301a5220bdc981",
+      "source_sha256": "9cd0be7582891446fa722e886fae3e21dcc39bc9491cc7d31fcf88549ffff801",
+      "packed_box": [
+        901,
+        32,
+        981,
+        72
+      ],
+      "atlas": "LoveAtlas",
+      "text": "设置",
+      "orientation": "horizontal",
+      "font_size": 36,
+      "min_font_size": 36,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1171
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_start_text",
+      "entry": "assets/bin/Data/e7ab771c63cea4848ab118354e1b07a4",
+      "source_sha256": "ee953dad9aa0e5359b0da82b7a6177896fa06df89bfd9e4bccdc5367e60838a7",
+      "packed_box": [
+        657,
+        361,
+        823,
+        414
+      ],
+      "atlas": "LoveAtlas",
+      "text": "开始",
+      "orientation": "horizontal",
+      "font_size": 40,
+      "min_font_size": 40,
+      "strokes": [
+        {
+          "width": 4,
+          "color": [
+            255,
+            68,
+            140,
+            255
+          ]
+        }
+      ],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1177
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_header_level_label",
+      "entry": "assets/bin/Data/f5e7546cafa2f43e8ac3356797e4cc7a",
+      "source_sha256": "94b30fddd7de90558dd41584db52a371f5b1a2bbfd022d1ed0f0e1a26db700a9",
+      "packed_box": [
+        916,
+        2016,
+        1012,
+        2048
+      ],
+      "atlas": "LoveAtlas",
+      "text": "若恋",
+      "orientation": "horizontal",
+      "font_size": 27,
+      "min_font_size": 27,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        179
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/02d5d482b73774443ad7f3a931fa373a",
+          "source_sha256": "19ad1bbab04b6a9b919a83588d6ca03edb7a1e611a0cd04ea10990ac133f2019",
+          "image_path_id": 537
+        },
+        {
+          "entry": "assets/bin/Data/b8fc45b598f9e4eedadfc97ddcb9b3c5",
+          "source_sha256": "24d792b4f75462e320ef3a9406a3d1854f737a5d9c27b94003e550c1796d2d7f",
+          "image_path_id": 188
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_home_guide",
+      "entry": "assets/bin/Data/f6e2ae3051d7a41a0b572b2747829409",
+      "source_sha256": "e95b75c9a28039db7d0c5bfe59699ab0539816606d6557d3158e432ca80fba45",
+      "packed_box": [
+        537,
+        208,
+        615,
+        304
+      ],
+      "atlas": "LoveAtlas",
+      "text": "玩法",
+      "orientation": "horizontal",
+      "font_size": 24,
+      "min_font_size": 24,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "edit_box": [
+        0,
+        68,
+        78,
+        96
+      ],
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/ed811ae7dad6e450c8b1306dc4b48c85",
+          "source_sha256": "96903b7c4d1f6ec5f349108fe13c1e88533259057769051228b4aa4a1ab9a75e",
+          "image_path_id": 1404
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_fin",
+      "entry": "assets/bin/Data/c2ca9c1239b154b2bb4bfef7aa435cb0",
+      "source_sha256": "bbc6d856f9fcd043a6a53364ba2424e447dda006f47e06bf91ebab754c93978b",
+      "packed_box": [
+        792,
+        671,
+        950,
+        711
+      ],
+      "atlas": "LoveAtlas",
+      "text": "退出",
+      "orientation": "horizontal",
+      "font_size": 36,
+      "min_font_size": 36,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "alpha_cutoff": 8,
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/6dc10bb9908724b5c8031c8d704e6f3c",
+          "source_sha256": "d46a911566673d9ad6f07418c90ffd49eee7c40aaf344b0e3780c582e4b3bf3a",
+          "image_path_id": 96
+        },
+        {
+          "entry": "assets/bin/Data/d033dc276e231463e99011c28ca4a9b7",
+          "source_sha256": "99ae1c827f3f44f55e5be3bc2a8c3926b88f15961d41b015823cbca5d89c032e",
+          "image_path_id": 98
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "label_log",
+      "entry": "assets/bin/Data/2b2281bda636244ff8dc9486c3ec8431",
+      "source_sha256": "770bd1267ed2940c6378b7590b3f9d0a2551311331a51763fef8e9329040e1df",
+      "packed_box": [
+        102,
+        586,
+        165,
+        618
+      ],
+      "atlas": "LoveADVAtlas",
+      "text": "记录",
+      "orientation": "horizontal",
+      "font_size": 31,
+      "min_font_size": 31,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 815
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "label_auto",
+      "entry": "assets/bin/Data/e60379d5f5e7a45cdb05fd98f8f16afb",
+      "source_sha256": "e72321497dc6eabf4c1112c5b362743991b385287ce85947d6d105ec3baf10cf",
+      "packed_box": [
+        777,
+        1794,
+        873,
+        1826
+      ],
+      "atlas": "LoveADVAtlas",
+      "text": "自动",
+      "orientation": "horizontal",
+      "font_size": 31,
+      "min_font_size": 31,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 725
+        },
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 804
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "label_fastforward",
+      "entry": "assets/bin/Data/40b0c8c4f36ae4e689ece9c382051ff1",
+      "source_sha256": "e64dbe2185ec211ed9d9ab36eec86a8e0c29f79fc41f4aa4ef1fdd4829bd5615",
+      "packed_box": [
+        849,
+        2016,
+        944,
+        2048
+      ],
+      "atlas": "LoveADVAtlas",
+      "text": "快进",
+      "orientation": "horizontal",
+      "font_size": 31,
+      "min_font_size": 31,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 665
+        },
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 821
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    }
+  ],
+  "atlases": [
+    {
+      "name": "CommonAtlas",
+      "entry": "assets/bin/Data/19a631c4eb2c54e678b3e206db4594d2",
+      "source_sha256": "fc07d0048f3ef94c5a8f84c96905a046410bab09e04dccba6c3525a88dc13b54",
+      "texture_id": 30,
+      "texture_name": "sactx-1-2048x2048-ASTC 6x6-CommonAtlas-06d6728f"
+    },
+    {
+      "name": "LoveAtlas",
+      "entry": "assets/bin/Data/cf7900fc3ae84467c8018370fd1ada01",
+      "source_sha256": "da2ce56da8b48f9911ab9359f4fc1220e35b776f2dfff8221acb000170f92679",
+      "texture_id": 5,
+      "texture_name": "sactx-0-2048x2048-ASTC 6x6-LoveAtlas-3307927b"
+    },
+    {
+      "name": "LoveADVAtlas",
+      "entry": "assets/bin/Data/53b6e16c5099148eebc58d87dc16f54f",
+      "source_sha256": "46eac140ac438729149fbe1dce0b4dd82c428d615c65312bb9535664c528c297",
+      "texture_id": 17,
+      "texture_name": "sactx-0-1024x2048-ASTC 6x6-LoveADVAtlas-9df05f4f"
+    }
+  ]
+}

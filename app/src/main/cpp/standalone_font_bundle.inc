@@ -1,0 +1,92 @@
+// Loaded on the Unity thread from a font-routing callback. The module delivers
+// this bundle before nativeInstall; it is never downloaded or replaced in play.
+void* loadStandaloneRhrFont(bool report) {
+    static uint32_t bundleHandle = 0;
+    static std::chrono::steady_clock::time_point retryAt{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now < retryAt || standaloneFontBundlePath.empty() || !runtimeInvoke ||
+        !stringNew || !classGetType || !typeGetObject || !gcHandleNew ||
+        !gcHandleGetTarget || !objectGetClass || !classIsAssignableFrom) return nullptr;
+    retryAt = now + std::chrono::seconds(10);
+    std::ifstream input(standaloneFontBundlePath, std::ios::binary | std::ios::ate);
+    if (!input) return nullptr;
+    const auto size = input.tellg();
+    char header[8]{};
+    input.seekg(0);
+    input.read(header, sizeof(header));
+    if (size < 8 || size > 64 * 1024 * 1024 || !input || std::memcmp(header, "UnityFS\0", 8) != 0) {
+        if (report) LOGE("Standalone font bundle has invalid header or size");
+        return nullptr;
+    }
+    static const auto loadFile = methodInfo("UnityEngine.AssetBundleModule.dll", "UnityEngine",
+        "AssetBundle", "LoadFromFile", 1);
+    static const auto loadMemory = methodInfo("UnityEngine.AssetBundleModule.dll", "UnityEngine",
+        "AssetBundle", "LoadFromMemory", 1);
+    static const auto loadAsset = []() {
+        const auto* method = methodInfo("UnityEngine.AssetBundleModule.dll", "UnityEngine",
+            "AssetBundle", "LoadAsset", 2);
+        return method ? method : methodInfo("UnityEngine.AssetBundleModule.dll", "UnityEngine",
+            "AssetBundle", "LoadAsset_Internal", 2);
+    }();
+    static const auto unload = methodInfo("UnityEngine.AssetBundleModule.dll", "UnityEngine",
+        "AssetBundle", "Unload", 1);
+    static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine",
+        "Object", "get_name", 0);
+    static void* fontClass = findClass("UnityEngine.TextRenderingModule.dll", "UnityEngine", "Font");
+    if ((!loadFile && !loadMemory) || !loadAsset || !unload || !getName || !fontClass) {
+        if (report) LOGE("Standalone font methods unavailable: file=%d memory=%d asset=%d unload=%d name=%d font=%d",
+            loadFile != nullptr, loadMemory != nullptr, loadAsset != nullptr, unload != nullptr, getName != nullptr, fontClass != nullptr);
+        return nullptr;
+    }
+    void* exception = nullptr;
+    void* bundle = bundleHandle ? gcHandleGetTarget(bundleHandle) : nullptr;
+    if (!bundle) {
+        if (loadFile) {
+            void* args[] = {stringNew(standaloneFontBundlePath.c_str())};
+            bundle = runtimeInvoke(loadFile, nullptr, args, &exception);
+        } else {
+            // IL2CPP may strip the unused file overload; the game already uses
+            // this memory overload for Octo bundles.
+            void* byteClass = findClass("mscorlib.dll", "System", "Byte");
+            if (!arrayNew || !byteClass) return nullptr;
+            auto* bytes = arrayNew(byteClass, static_cast<size_t>(size));
+            if (!bytes || bytes->length != static_cast<size_t>(size)) return nullptr;
+            input.clear();
+            input.seekg(0);
+            if (!input.read(reinterpret_cast<char*>(bytes->data), static_cast<size_t>(size))) return nullptr;
+            void* args[] = {bytes};
+            bundle = runtimeInvoke(loadMemory, nullptr, args, &exception);
+        }
+        if (exception || !bundle) {
+            if (report) LOGE("Unity rejected standalone font bundle");
+            return nullptr;
+        }
+        bundleHandle = gcHandleNew(bundle, false);
+    }
+    // The build tool gives the bundle a stable, case-insensitive asset key.
+    void* args[] = {stringNew("localify-resourcehanroundedsc-extrabold"),
+                    typeGetObject(classGetType(fontClass))};
+    void* font = runtimeInvoke(loadAsset, bundle, args, &exception);
+    bool valid = !exception && font && classIsAssignableFrom(fontClass, objectGetClass(font));
+    if (valid) {
+        auto* name = static_cast<Il2CppString*>(runtimeInvoke(getName, font, nullptr, &exception));
+        valid = !exception && utf8(name) == "Localify-ResourceHanRoundedSC-ExtraBold";
+    }
+    if (valid && setCachedFontRetention(font, true)) {
+        loadedCjkOnlyFontHandle = gcHandleNew(font, false);
+        if (loadedCjkOnlyFontHandle) {
+            LOGI("Loaded standalone RHR font from module bundle (%lld bytes)", static_cast<long long>(size));
+            return font;
+        }
+    }
+    // Do not leave an invalid bundle loaded: Unity would reject the next retry
+    // as a duplicate. No objects from this failed load have been given to UI.
+    bool destroy = true;
+    void* unloadArgs[] = {&destroy};
+    exception = nullptr;
+    runtimeInvoke(unload, bundle, unloadArgs, &exception);
+    if (bundleHandle && gcHandleFree) gcHandleFree(bundleHandle);
+    bundleHandle = 0;
+    if (report) LOGE("Standalone bundle did not provide a usable RHR Font");
+    return nullptr;
+}
