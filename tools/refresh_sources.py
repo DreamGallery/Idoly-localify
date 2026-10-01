@@ -167,11 +167,14 @@ def run(args) -> dict:
     def command(stage, argv, cwd=ROOT):
         summary["stage"] = stage
         write_json(args.summary, summary)
+        # Public Actions logs expose progress, never arguments or private output.
+        print(f"Source refresh: {stage} started", flush=True)
         with (args.work_dir / (stage + ".log")).open("w", encoding="utf-8") as log:
             result = subprocess.run([str(x) for x in argv], cwd=cwd, stdout=log,
                                     stderr=subprocess.STDOUT, check=False)
         if result.returncode:
             raise RuntimeError(f"Stage {stage} failed; see private work directory")
+        print(f"Source refresh: {stage} completed", flush=True)
 
     try:
         receipt = args.work_dir / "fetched-receipt.json"
