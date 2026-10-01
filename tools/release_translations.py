@@ -140,6 +140,81 @@ def refresh_and_import_machine(repository, source, csv_dir, project, command, *,
     return receipt
 
 
+def prepare_collaboration_stage(repository, source, csv_dir, work):
+    """Migrate a private copy; never mutate the real data checkout before validation."""
+    import importlib.util
+    from import_collaboration import read_csv, safe_files
+    from story_csv_paths import classify
+    from export_translation_sources import migration_data_path
+    script = repository / 'scripts/story_migration.py'
+    if script.is_symlink() or not script.is_file():
+        raise ValueError('Trusted story migration script is missing')
+    spec = importlib.util.spec_from_file_location('release_story_migration', script)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    stage = work / 'collaboration-stage'
+    view = work / 'classified-original-csv'
+    for target in (stage, view):
+        if target.is_symlink(): raise ValueError('Symlinked collaboration workspace')
+        if target.exists(): shutil.rmtree(target)
+    # Public checkout data is copied without executing any files from the stage.
+    for path in repository.rglob('*'):
+        if '.git' not in path.relative_to(repository).parts and path.is_symlink():
+            raise ValueError('Symlinked collaboration checkout')
+    shutil.copytree(repository, stage, ignore=shutil.ignore_patterns('.git'))
+    view.mkdir()
+    for path in safe_files(csv_dir, '*.csv'):
+        stem, _, rows = read_csv(path)
+        if not any(r['text'] for r in rows if r['id'] not in ('info', '译者')):
+            continue
+        target = view / classify(stem + '.txt')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(migration.encode_csv([{**r, 'trans': ''} for r in rows]))
+    receipt, writes, deletes = migration.plan(source, view, stage)
+    if receipt.get('schema_version') != 1 or set(receipt.get('changed_paths', [])) != set(writes) | set(deletes):
+        raise ValueError('Migration receipt disagrees with planned data changes')
+    if any(not migration_data_path(p) for p in set(writes) | set(deletes)):
+        raise ValueError('Migration proposed a non-data path')
+    baseline = {p: (repository / p).read_bytes() if (repository / p).is_file() else None
+                for p in set(writes) | set(deletes)}
+    migration.apply(stage, writes, deletes)
+    (work / 'story-migration.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
+    return stage, receipt, baseline
+
+
+def install_collaboration_stage(repository, stage, paths, migration_paths, baseline, apply=False):
+    """Select exact differences; validate all paths and baselines before touching checkout."""
+    from export_translation_sources import export_data_path, migration_data_path
+    allowed_migrations = set(migration_paths)
+    if any(not migration_data_path(p) for p in allowed_migrations):
+        raise ValueError('Unsafe migration receipt path')
+    changes = {}
+    for relative in sorted(set(paths)):
+        parts = Path(relative).parts
+        if Path(relative).is_absolute() or '..' in parts or not (export_data_path(relative) or relative in allowed_migrations):
+            raise ValueError('Unsafe staged localization path')
+        old, new = repository / relative, stage / relative
+        for root, target in ((repository, old), (stage, new)):
+            if any(p.is_symlink() for p in (target, *target.parents) if p == root or root in p.parents):
+                raise ValueError('Symlinked staged localization data')
+        before = old.read_bytes() if old.is_file() else None
+        if relative in baseline and before != baseline[relative]:
+            raise ValueError('Collaboration data changed during release')
+        after = new.read_bytes() if new.is_file() else None
+        if before != after: changes[relative] = after
+    if apply:
+        for relative, data in changes.items():
+            target = repository / relative
+            if data is None:
+                target.unlink()
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as stream:
+                    temp = Path(stream.name); stream.write(data)
+                temp.replace(target)
+    return sorted(changes)
+
+
 def configure_api(config):
     """Actions env (manual input/repository vars) wins over local compatibility config."""
     base = os.environ.get('OPENAI_API_BASE') or config.get('openai_api_base') or ''
@@ -285,7 +360,9 @@ def main():
         if origin.exists(): shutil.copytree(origin, machine / 'translations' / relative)
     shutil.copytree(csv_dir, machine / 'csv')
     skip_stories = [stem for stem, value in receipt['stories'].items() if value['layer'] != 'ai']
-    receipt = import_stories(args.repository_dir, csv_dir, source, csv_dir, project, human_only=True)
+    stage, migration_receipt, migration_baseline = prepare_collaboration_stage(
+        args.repository_dir, source, csv_dir, work)
+    receipt = import_stories(stage, csv_dir, source, csv_dir, project, human_only=True)
     validate_story_coverage(csv_dir)
     (work / 'collaboration-final.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
     run([args.python, project / 'tools/pipeline.py', 'build'], project)
@@ -312,14 +389,14 @@ def main():
         run([project / 'gradlew', ':app:assembleRelease', '--no-daemon'], project)
         apk = output / f'idoly-localify-{version}.apk'
         shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)
-    if args.dry_run:
-        changed = export_sources(machine, machine / 'csv', source, args.repository_dir,
-                                 skip_stories, summary, apply=False)
-        data_commit = None
-    else:
-        changed = export_sources(machine, machine / 'csv', source, args.repository_dir,
-                                 skip_stories, summary, apply=True)
-        data_commit = sync_git(args.repository_dir, changed, base_revision, args.data_branch)
+    exported = export_sources(machine, machine / 'csv', source, stage,
+                              skip_stories, summary, apply=True)
+    migration_paths = migration_receipt['changed_paths']
+    changed = install_collaboration_stage(args.repository_dir, stage,
+        set(exported) | set(migration_paths), migration_paths, migration_baseline,
+        apply=not args.dry_run)
+    data_commit = None if args.dry_run else sync_git(args.repository_dir, changed,
+        base_revision, args.data_branch, migration_paths=migration_paths)
     results = []
     if apk:
         results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run))

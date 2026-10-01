@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -111,9 +112,31 @@ def export_sources(project, csv_dir, source_dir, repository, skip_stories=(), su
     return changed
 
 
-def sync_git(repository, paths, expected_head, branch='main'):
+def migration_data_path(path):
+    if not isinstance(path, str): return False
+    parts = path.split('/')
+    if not parts or Path(path).is_absolute() or '\\' in path or any(p in ('', '.', '..') for p in parts):
+        return False
+    if path.startswith('archive/backups/'):
+        pieces = path.split('/', 4)
+        return (len(pieces) == 5 and all(re.fullmatch(r'[a-f0-9]{64}', p) for p in pieces[2:4])
+                and not pieces[4].startswith('archive/') and migration_data_path(pieces[4]))
+    if path.startswith(('story/ai/', 'story/human/', 'story/reviewed/',
+                        'story/drafts/translation/', 'story/drafts/proofread/')):
+        return bool(re.fullmatch(r'adv_[A-Za-z0-9_-]+\.csv', parts[-1]))
+    return bool(re.fullmatch(r'records/adv_[A-Za-z0-9_-]+\.json|proofread_txt/adv_[A-Za-z0-9_-]+\.txt', path))
+
+
+def export_data_path(path):
+    if not isinstance(path, str) or '\\' in path or any(p in ('', '.', '..') for p in path.split('/')): return False
+    return (path == 'upstream.json' or path in JSON_FILES or
+            bool(re.fullmatch(r'master/(?:orig|zh-Hans)/[^/]+\.json', path)) or
+            (path.startswith('story/ai/') and path.endswith('.csv')))
+
+
+def sync_git(repository, paths, expected_head, branch='main', migration_paths=()):
     def git(*args):
-        return subprocess.run(['git', '-C', str(repository), '-c', 'credential.helper=',
+        return subprocess.run(['git', '-C', str(repository), '-c', 'core.quotepath=false', '-c', 'credential.helper=',
                                '-c', 'credential.helper=!gh auth git-credential', *args], check=True,
                               text=True, capture_output=True).stdout.strip()
     if not paths: return None
@@ -121,13 +144,17 @@ def sync_git(repository, paths, expected_head, branch='main'):
     git('fetch', 'origin', branch)
     if git('rev-parse', 'FETCH_HEAD') != expected_head:
         raise ValueError('Translation branch advanced; retry on latest data (no force push)')
-    # Paths come solely from the data exporter; never stage the whole worktree.
+    # Migration grants apply only to explicit validated receipt paths.
+    allowed_migrations = set(migration_paths)
+    if any(not migration_data_path(p) for p in allowed_migrations):
+        raise ValueError('Unsafe migration data path')
     for path in paths:
-        if not (path == 'upstream.json' or path in JSON_FILES or
-                path.startswith(('master/orig/', 'master/zh-Hans/', 'story/ai/'))):
+        if not (export_data_path(path) or path in allowed_migrations):
             raise ValueError(f'Not an export data path: {path}')
-    git('add', '--', *paths)
-    staged = git('diff', '--cached', '--name-only').splitlines()
+    paths = sorted(set(paths))
+    for offset in range(0, len(paths), 100):
+        git('add', '--', *paths[offset:offset + 100])
+    staged = git('diff', '--cached', '--no-renames', '--name-only').splitlines()
     if set(staged) != set(paths): raise ValueError('Unexpected staged files; refusing data commit')
     git('-c', 'user.name=Idoly localization bot', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
         'commit', '-m', 'Update verified localization sources')

@@ -1,4 +1,7 @@
 import json
+import subprocess
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -59,3 +62,48 @@ class SourceExportTests(CollaborationImportTests):
         self.assertEqual(value['story']['translated_csv_files'], 1)
         self.assertEqual(value['story']['text_fields'], 1)
         self.assertEqual(len(value['story']['resource_snapshot_sha256']), 64)
+
+
+class SourceGitTests(unittest.TestCase):
+    def test_unicode_rename_and_large_batch_with_local_bare_remote(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); repository = root / 'checkout'; remote = root / 'remote.git'
+            def git(*args, cwd=None):
+                return subprocess.run(['git', *args], cwd=cwd, text=True,
+                                      capture_output=True, check=True).stdout.strip()
+            git('init', '--bare', str(remote))
+            git('init', '-b', 'main', str(repository))
+            git('config', 'user.name', 'Test', cwd=repository)
+            git('config', 'user.email', 'test@example.invalid', cwd=repository)
+            old = 'story/human/group/サニーピース/adv_group_sun_01_01.csv'
+            new = 'story/drafts/translation/group/月のテンペスト/adv_group_sun_01_01.csv'
+            (repository / old).parent.mkdir(parents=True)
+            (repository / old).write_text('same contents for rename detection\n')
+            git('add', '--', old, cwd=repository)
+            git('commit', '-m', 'initial', cwd=repository)
+            git('remote', 'add', 'origin', str(remote), cwd=repository)
+            git('push', 'origin', 'main', cwd=repository)
+            initial = git('rev-parse', 'HEAD', cwd=repository)
+            (repository / new).parent.mkdir(parents=True)
+            (repository / old).rename(repository / new)
+            added = []
+            for number in range(205):
+                path = f'story/ai/adv_batch_{number}.csv'
+                (repository / path).parent.mkdir(parents=True, exist_ok=True)
+                (repository / path).write_text(f'new {number}')
+                added.append(path)
+            execute = subprocess.run
+            commands = []
+            def spy(command, **kwargs):
+                commands.append(command)
+                return execute(command, **kwargs)
+            with patch.object(exports.subprocess, 'run', side_effect=spy):
+                result = exports.sync_git(repository, [old, new, *added], initial,
+                                          migration_paths=[old, new])
+            self.assertNotEqual(result, initial)
+            self.assertEqual(git('--git-dir', str(remote), 'rev-parse', 'refs/heads/main'), result)
+            self.assertEqual(git('status', '--porcelain', cwd=repository), '')
+            batches = [c[c.index('--') + 1:] for c in commands if 'add' in c]
+            self.assertEqual([len(b) for b in batches], [100, 100, 7])
+            self.assertTrue(any('--no-renames' in c for c in commands))
+            self.assertTrue(all('core.quotepath=false' in c for c in commands))
