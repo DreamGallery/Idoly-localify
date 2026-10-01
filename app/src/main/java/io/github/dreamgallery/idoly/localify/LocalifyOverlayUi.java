@@ -193,7 +193,7 @@ final class LocalifyOverlayUi {
                 () -> editManifestUrl(activity), () -> FontProfileEditor.show(activity, dataDir),
                 () -> hide(activity), () -> StorySwap.show(activity, dataDir),
                 () -> StorySwap.showEvent(activity, dataDir),
-                () -> StorySwap.showSpecial(activity, dataDir), capturing);
+                () -> StorySwap.showSpecial(activity, dataDir), capturing, dataDir);
         }));
         actions.setVisibility(expanded ? View.VISIBLE : View.GONE);
         ((FrameLayout) decor).addView(container, new FrameLayout.LayoutParams(-2, -2,
@@ -501,6 +501,7 @@ final class LocalifyOverlayUi {
             .setPositiveButton("保存", (dialog, which) -> {
                 try {
                     TextHotUpdater.writeManifestUrl(dataDir, input.getText().toString().trim());
+                    LocalifySettingsUi.refreshUpdateStatus();
                     Toast.makeText(activity, "更新地址已保存", Toast.LENGTH_SHORT).show();
                 } catch (Exception error) {
                     Toast.makeText(activity, error.getMessage(), Toast.LENGTH_LONG).show();
@@ -512,6 +513,8 @@ final class LocalifyOverlayUi {
         Toast.makeText(activity, remote ? "正在检查文本更新" : "正在载入本地文本",
             Toast.LENGTH_SHORT).show();
         TextHotUpdater.run(dataDir, remote, result -> MAIN.post(() -> {
+            UpdateChecker.textInstalled(activity.getApplicationContext(), result);
+            LocalifySettingsUi.refreshUpdateStatus();
             if (!activity.isFinishing() && !activity.isDestroyed() && current.get() == activity)
                 new PluginDialog.Builder(activity)
                     .setTitle(result.success ? "文本更新完成" : "文本更新失败")

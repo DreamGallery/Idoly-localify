@@ -15,9 +15,9 @@ class UpdateArchiveTests(unittest.TestCase):
     def test_archive_validation_and_selective_staging(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = subprocess.run([JAVAC, '-d', str(root), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdateArchive.java'), str(ROOT / 'tools/java-tests/UpdateArchiveTest.java'), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdatePolicy.java'), str(ROOT / 'tools/java-tests/UpdatePolicyTest.java')], capture_output=True, text=True)
+            result = subprocess.run([JAVAC, '-d', str(root), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdateArchive.java'), str(ROOT / 'tools/java-tests/UpdateArchiveTest.java'), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdatePolicy.java'), str(ROOT / 'tools/java-tests/UpdatePolicyTest.java'), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdateVersion.java'), str(ROOT / 'tools/java-tests/UpdateVersionTest.java')], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for test in ('UpdateArchiveTest', 'UpdatePolicyTest'):
+            for test in ('UpdateArchiveTest', 'UpdatePolicyTest', 'UpdateVersionTest'):
                 result = subprocess.run([JAVA, '-cp', str(root), 'io.github.dreamgallery.idoly.localify.' + test, str(root)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
 

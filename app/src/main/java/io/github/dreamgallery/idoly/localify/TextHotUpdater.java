@@ -34,13 +34,19 @@ final class TextHotUpdater {
     private static final int MANIFEST_LIMIT = 4 * 1024 * 1024;
     private static final long TOTAL_LIMIT = 1024L * 1024 * 1024;
     private static final String TRANSACTION_DIR = ".text-update-transaction";
+    private static final String TEXT_VERSION_FILE = "installed-text-version.txt";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
 
     interface Callback { void done(Result result); }
     static final class Result {
         final boolean success;
         final String message;
-        Result(boolean ok, String text) { success = ok; message = text; }
+        final String manifestUrl;
+        final String version;
+        Result(boolean ok, String text) { this(ok, text, null, null); }
+        Result(boolean ok, String text, String address, String installedVersion) {
+            success = ok; message = text; manifestUrl = address; version = installedVersion;
+        }
     }
     private static final class Item {
         final String name;
@@ -127,6 +133,27 @@ final class TextHotUpdater {
         atomicMove(temp.toPath(), target.toPath());
     }
 
+    static String readTextVersion(File dataDir) {
+        if (dataDir == null) return "";
+        File file = new File(dataDir, TEXT_VERSION_FILE);
+        if (!file.isFile() || file.length() > 512) return "";
+        try { return UpdateVersion.textVersion(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)); }
+        catch (Exception error) { return ""; }
+    }
+
+    static byte[] fetchMetadata(String address, int limit) throws Exception {
+        return fetch(httpsUrl(address), limit);
+    }
+
+    static String remoteVersion(String address) throws Exception {
+        if (address.isEmpty()) return "";
+        JSONObject manifest = new JSONObject(new String(fetchMetadata(address, MANIFEST_LIMIT), StandardCharsets.UTF_8));
+        UpdatePolicy.schemaVersion(manifest.opt("schema_version"));
+        if (!manifest.getJSONObject("files").has("dict.json"))
+            throw new IllegalArgumentException("更新清单缺少字典");
+        return UpdateVersion.textVersion(manifest.getString("version"));
+    }
+
     private static Result updateRemote(File dataDir) throws Exception {
         if (dataDir == null) throw new IllegalStateException("本地化尚未初始化");
         recover(dataDir);
@@ -139,10 +166,7 @@ final class TextHotUpdater {
         if ((archive != null && schemaVersion != 2) || (manifest.has("archive") && archive == null)) {
             throw new IllegalArgumentException("更新压缩包配置无效");
         }
-        String version = manifest.getString("version");
-        if (version.isEmpty() || version.length() > 128) {
-            throw new IllegalArgumentException("更新清单版本无效");
-        }
+        String version = UpdateVersion.textVersion(manifest.getString("version"));
         JSONObject files = manifest.getJSONObject("files");
         if (!files.has("dict.json") || files.length() > 8192) {
             throw new IllegalArgumentException("更新清单必须包含字典，且文件数不得超过 8192");
@@ -167,7 +191,8 @@ final class TextHotUpdater {
             File target = safeTarget(dataDir, item.name);
             if (!target.isFile() || !sha256(target).equals(item.sha256)) changed.add(item);
         }
-        if (changed.isEmpty()) return new Result(true, "文本已是清单版本 " + version);
+        if (changed.isEmpty() && version.equals(readTextVersion(dataDir)))
+            return new Result(true, "文本已是清单版本 " + version, manifestUrl, version);
         Path stage = Files.createTempDirectory(dataDir.toPath(), ".text-update-");
         Map<String, String> noticeScripts = null;
         try {
@@ -178,7 +203,7 @@ final class TextHotUpdater {
                 if (archive == null) total += download(item.url, item.staged, item.maxBytes, item.sha256);
                 if (total > TOTAL_LIMIT) throw new IllegalArgumentException("更新总量超过 1 GiB");
             }
-            if (archive != null) {
+            if (archive != null && !changed.isEmpty()) {
                 String archiveHash = archive.getString("sha256").toLowerCase(Locale.ROOT);
                 if (!archiveHash.matches("[0-9a-f]{64}")) {
                     throw new IllegalArgumentException("更新压缩包 SHA256 无效");
@@ -213,6 +238,16 @@ final class TextHotUpdater {
 
             // Backups and a durable journal precede the first in-memory or disk
             // change. Startup restores them if the process dies during commit.
+            // Local metadata is never accepted as a remote manifest destination.
+            // Append it after validating/downloading payloads so rollback and
+            // process-death recovery restore the matching previous version too.
+            Item versionItem = new Item(TEXT_VERSION_FILE, null, "", 512);
+            versionItem.staged = stage.resolve("text-version").toFile();
+            try (FileOutputStream output = new FileOutputStream(versionItem.staged)) {
+                output.write(version.getBytes(StandardCharsets.UTF_8));
+                output.getFD().sync();
+            }
+            changed.add(versionItem);
             prepareTransaction(dataDir, changed);
             if (dictionaryChanged && !HookEntry.reloadDictionary(stagedDictionary)) {
                 recover(dataDir);
@@ -234,7 +269,7 @@ final class TextHotUpdater {
                     Log.w(TAG, "Committed text update; stale backup cleanup deferred", cleanupError);
                 }
                 return new Result(true, "已更新到 " + version + "。界面字典即时生效；剧情资源下次加载生效。"
-                    + (masterChanged ? "MasterDB 已更新，请重启游戏使其生效。" : ""));
+                    + (masterChanged ? "MasterDB 已更新，请重启游戏使其生效。" : ""), manifestUrl, version);
             } catch (Exception error) {
                 try { recover(dataDir); }
                 catch (Exception rollbackError) {
@@ -366,7 +401,7 @@ final class TextHotUpdater {
     }
 
     private static File safeTarget(File dataDir, String name) throws Exception {
-        maximumFor(name);
+        if (!TEXT_VERSION_FILE.equals(name)) maximumFor(name);
         File target = new File(dataDir, name).getCanonicalFile();
         if (!target.getPath().startsWith(dataDir.getCanonicalPath() + File.separator)) {
             throw new IllegalArgumentException("更新路径超出本地化目录");

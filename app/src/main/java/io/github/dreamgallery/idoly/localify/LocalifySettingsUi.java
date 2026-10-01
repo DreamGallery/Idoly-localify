@@ -6,28 +6,58 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Switch;
 import android.content.res.ColorStateList;
+import java.io.File;
 
 /** Full-window settings hosted by the game activity. */
 final class LocalifySettingsUi {
     private static Dialog opened;
+    private static TextView updateStatus;
+    private static File updateDirectory;
 
     private LocalifySettingsUi() {}
 
     static void dismiss() {
         if (opened != null) opened.dismiss();
         opened = null;
+        updateStatus = null;
+        updateDirectory = null;
+    }
+
+    static void refreshUpdateStatus() {
+        if (opened == null || !opened.isShowing() || updateStatus == null) return;
+        updateStatus.setText(UpdateChecker.status(opened.getContext(), updateDirectory));
     }
 
     static void show(Activity activity, Runnable update, Runnable address, Runnable font,
-                     Runnable hide, Runnable story, Runnable eventStory, Runnable specialStory, boolean capturing) {
+                     Runnable hide, Runnable story, Runnable eventStory, Runnable specialStory, boolean capturing,
+                     File directory) {
         dismiss();
         Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar);
         SettingsUiStyle.Page page = new SettingsUiStyle.Page(dialog, "本地化设置",
             "管理文本更新、字体排版与采集工具。", "返回游戏", dialog::dismiss);
-        LinearLayout updates = SettingsUiStyle.card(page.body, "文本更新", "获取最新译文，或连接自己的更新服务。");
-        updates.addView(SettingsUiStyle.button(dialog.getContext(), "检查在线文本更新", true, update),
+        LinearLayout updates = SettingsUiStyle.card(page.body, "版本与更新", "检查版本不会自动下载或安装。");
+        TextView status = SettingsUiStyle.text(dialog.getContext(), UpdateChecker.status(activity, directory),
+            14, SettingsUiStyle.MUTED, false);
+        status.setLineSpacing(SettingsUiStyle.dp(activity, 4), 1);
+        updates.addView(status);
+        SettingsUiStyle.row(updates, "检查插件与文本版本", null,
+            () -> UpdateChecker.check(activity, directory, true));
+        updates.addView(SettingsUiStyle.button(dialog.getContext(), "下载并更新文本", true, update),
             new LinearLayout.LayoutParams(-1, -2));
         SettingsUiStyle.row(updates, "更新地址", null, address);
+        SettingsUiStyle.row(updates, "插件下载", "GitHub Release",
+            () -> FeedbackUi.open(activity, UpdateChecker.downloadPage(activity)));
+        TextView pluginHint = SettingsUiStyle.text(dialog.getContext(),
+            "LSPatch：下载后重新嵌入游戏。LSPosed：安装模块后重启游戏。", 13, SettingsUiStyle.MUTED, false);
+        updates.addView(pluginHint);
+        Switch checkStartup = new Switch(dialog.getContext());
+        checkStartup.setText("启动时检查更新");
+        checkStartup.setTextSize(16);
+        checkStartup.setTextColor(SettingsUiStyle.INK);
+        checkStartup.setMinHeight(SettingsUiStyle.dp(activity, 56));
+        checkStartup.setChecked(UpdateChecker.enabled(activity));
+        checkStartup.setOnCheckedChangeListener((button, enabled) -> UpdateChecker.setEnabled(activity, enabled));
+        updates.addView(checkStartup);
         LinearLayout fonts = SettingsUiStyle.card(page.body, "字体与排版", "按场景调整字号、描边和行距，预览后再保存。");
         SettingsUiStyle.row(fonts, "调整游戏字体", null, () -> { font.run(); dialog.dismiss(); });
         // Keep the visible settings page behind modal story tools; closing them returns here.
@@ -69,8 +99,12 @@ final class LocalifySettingsUi {
         restoreHint.setPadding(SettingsUiStyle.dp(activity, 10), 0, SettingsUiStyle.dp(activity, 10), SettingsUiStyle.dp(activity, 8));
         overlay.addView(restoreHint);
         dialog.setContentView(page.root);
-        dialog.setOnDismissListener(ignored -> { if (opened == dialog) opened = null; });
+        dialog.setOnDismissListener(ignored -> { if (opened == dialog) {
+            opened = null; updateStatus = null; updateDirectory = null;
+        } });
         opened = dialog;
+        updateStatus = status;
+        updateDirectory = directory;
         SettingsUiStyle.configureWindow(dialog);
         dialog.show();
     }

@@ -130,6 +130,7 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             }
             LocalifyOverlayUi.install((Application) context.getApplicationContext());
             LocalifyOverlayUi.configure(dataDir);
+            UpdateChecker.startup(context, dataDir);
             try {
                 File notices = new File(dataDir, "web-notice.json");
                 ensureBuiltInFile(context, notices, "web-notice.installed.sha256");
