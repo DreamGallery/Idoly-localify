@@ -93,5 +93,39 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse((csv_dir / 'adv_removed_human.csv').exists())
         self.assertEqual((csv_dir / 'adv_main_01.csv').read_text(), 'original fields, blank translation')
 
+    def test_actions_api_environment_overrides_runner_config(self):
+        values = {'OPENAI_API_BASE': 'https://actions.example/v1', 'OPENAI_MODEL': 'actions-model',
+                  'OPENAI_API_KEY': 'never-output-this'}
+        with patch.dict(release.os.environ, values, clear=True):
+            result = release.configure_api({'openai_api_base': 'https://runner.example/v1', 'openai_model': 'runner-model'})
+            self.assertEqual(result, {'api_base': values['OPENAI_API_BASE'], 'model': 'actions-model'})
+            self.assertNotIn('never-output-this', json.dumps(result))
+
+    def test_empty_actions_variables_fall_back_to_runner_config(self):
+        with patch.dict(release.os.environ, {'OPENAI_API_BASE': '', 'OPENAI_MODEL': ''}, clear=True):
+            result = release.configure_api({'openai_api_base': 'https://runner.example/v1', 'openai_model': 'runner-model'})
+            self.assertEqual(result['model'], 'runner-model')
+            self.assertEqual(release.os.environ['OPENAI_API_BASE'], 'https://runner.example/v1')
+
+    def test_credential_urls_are_rejected_without_echoing_them(self):
+        for url in ('https://user:secret@example.test/v1', 'https://example.test/v1?key=secret',
+                    'http://example.test/v1', 'https://example.test/#secret'):
+            with self.subTest(url=url), patch.dict(release.os.environ, {'OPENAI_API_BASE': url}, clear=True):
+                with self.assertRaisesRegex(ValueError, 'HTTPS') as error:
+                    release.configure_api({})
+                self.assertNotIn('secret', str(error.exception))
+
+    def test_model_line_breaks_are_rejected(self):
+        with patch.dict(release.os.environ, {'OPENAI_MODEL': 'model\nunsafe'}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'single-line'):
+                release.configure_api({})
+
+    def test_api_summary_contains_no_key_and_escapes_model_markup(self):
+        summary = self.root / 'summary.md'
+        with patch.dict(release.os.environ, {'GITHUB_STEP_SUMMARY': str(summary), 'OPENAI_API_KEY': 'private-key'}, clear=True):
+            release.write_api_summary({'api_base': 'https://example.test/v1', 'model': '<model>'})
+        self.assertNotIn('private-key', summary.read_text())
+        self.assertIn('&lt;model&gt;', summary.read_text())
+
 
 if __name__ == '__main__': unittest.main()
