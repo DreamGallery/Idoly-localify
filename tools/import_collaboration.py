@@ -126,6 +126,12 @@ def validate_story_coverage(csv_dir):
         raise ValueError(f'Final story coverage incomplete ({len(missing)} fields): {missing[:5]}')
 
 
+def title_match_key(value):
+    # MasterDB inserts display-only line breaks into story names, while ADV
+    # headers use a single line. Keep all other characters significant.
+    return value.replace('\\n', '').replace('\r', '').replace('\n', '')
+
+
 def apply_titles(project, selected):
     master = project / 'translations/master'
     catalog = json.loads((project / 'translations/story-metadata/catalog.json').read_text())['stories']
@@ -146,7 +152,8 @@ def apply_titles(project, selected):
                 target = re.search(r'\d+话\s+(.+)$', row['trans'])
                 if source and target: pairs.append((source[1], target[1]))
                 for text, value in pairs:
-                    if original.get(record_id, {}).get('name') == text:
+                    master_name = original.get(record_id, {}).get('name')
+                    if isinstance(master_name, str) and title_match_key(master_name) == title_match_key(text):
                         candidates.add(value)
         if len(candidates) > 1:
             raise ValueError(f'Conflicting human titles for Story:{record_id}')

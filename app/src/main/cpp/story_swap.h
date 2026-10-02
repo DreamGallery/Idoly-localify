@@ -149,7 +149,8 @@ struct StorySwapTitle {
 };
 
 // Compiled card scripts have one bounded [title] line. Accept the observed
-// missing space after 第N话, but never guess metadata from arbitrary dialogue.
+// missing space after 第N话 and reviewed N话 titles without 第. Never guess
+// metadata from arbitrary dialogue.
 inline StorySwapTitle storySwapScriptTitle(const std::string& script) {
     constexpr const char* prefix = "[title title=";
     const auto pos = script.find(prefix);
@@ -158,9 +159,11 @@ inline StorySwapTitle storySwapScriptTitle(const std::string& script) {
     if (end == std::string::npos || end - pos > 1024 ||
         script.find('\n', pos) < end || script.find(prefix, end) != std::string::npos) return {};
     const auto value = script.substr(pos + 13, end - pos - 13);
-    const auto episodeStart = value.find(" 第");
+    auto episodeStart = value.find(" 第");
+    const bool hasOrdinal = episodeStart != std::string::npos;
+    if (!hasOrdinal) episodeStart = value.find(' ');
     if (episodeStart == std::string::npos || episodeStart == 0) return {};
-    const auto numberStart = episodeStart + std::string(" 第").size();
+    const auto numberStart = episodeStart + (hasOrdinal ? std::string(" 第").size() : 1);
     const auto numberEnd = value.find("话", numberStart);
     if (numberEnd == std::string::npos || numberEnd == numberStart || numberEnd - numberStart > 2) return {};
     int episode = 0;
@@ -200,7 +203,10 @@ inline StorySwapPlaybackTitles storySwapPlaybackTitles(
     if (selection.entryEpisode && (result.entry.episode != "第" + std::to_string(selection.entryEpisode) + "话" ||
         result.source.episode != "第" + std::to_string(selection.sourceEpisode) + "话")) return {};
     result.entryCatalogTitle = selection.entryTitle;
-    result.sourceCatalogTitle = selection.sourceTitle;
+    // The embedded catalog predates downloaded human revisions. Preserve its
+    // line breaks only when its wording still equals the loaded script title.
+    result.sourceCatalogTitle = storySwapTitleKey(selection.sourceTitle) == storySwapTitleKey(result.source.title)
+        ? selection.sourceTitle : result.source.title;
     return result;
 }
 

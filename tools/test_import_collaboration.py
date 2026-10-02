@@ -58,6 +58,22 @@ class CollaborationImportTests(unittest.TestCase):
         path = self.layer('reviewed', '1话 校对')
         path.write_text(path.read_text().replace(self.rows[1]['text'], 'a' * 64))
         with self.assertRaisesRegex(ValueError, 'Stale'): self.run_import()
+
+    def test_reviewed_title_overrides_master_with_display_line_breaks(self):
+        self.rows[0]['text'] = '伊吹渚 1話 ちょっと顔熱いかも'
+        self.write_csv(self.csv / (self.stem + '.csv'), self.rows)
+        self.layer('reviewed', '伊吹渚 1话 脸好像有点烫')
+        for original in ('ちょっと\\n顔熱いかも', 'ちょっと\r\n顔熱いかも'):
+            self.json('translations/master/orig/Story.json', {'story-1': {'name': original},
+                'unrelated': {'name': original}})
+            result = self.run_import()
+            self.assertEqual(result['master_title_overrides'][0]['translation'], '脸好像有点烫')
+            data = json.loads((self.project / 'translations/master/zh-Hans/Story.json').read_text())
+            self.assertEqual(data['story-1']['name'], '脸好像有点烫')
+            self.assertEqual(data['unrelated']['name'], '不能改')
+        # A real wording difference must not be normalized away.
+        self.json('translations/master/orig/Story.json', {'story-1': {'name': '違うタイトル'}})
+        self.assertEqual(self.run_import()['master_title_overrides'], [])
     def test_modified_original_field_blocks_import(self):
         path = self.layer('human', '1话 人工')
         path.write_text(path.read_text().replace('1話 始まり', '1話 変更'))
