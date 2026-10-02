@@ -60,7 +60,7 @@ https://github.com/DreamGallery/Idoly-localify-translations/releases/latest/down
 
 `dict.json` 必需；公告、剧情和 MasterDB 补丁可选。MasterDB 更新后需要重启游戏，仍按完整原始记录字节匹配；游戏原文变化后旧补丁不会凭近似文本套用。
 
-插件 APK 单独按版本发布，仅 `versionName` 更新时构建，且不占用文本发布的 latest。文本更新入口不安装 APK、字体或可执行代码。
+插件 APK 单独按版本发布，仅 `versionName` 更新时构建，且不占用文本发布的 latest。发布说明读取 [CHANGELOG.md](../CHANGELOG.md) 中该版本的条目，并附上安装方式；发布新版本前需同时更新版本号与对应记录。文本更新入口不安装 APK、字体或可执行代码。
 
 ### 兼容静态文件方式
 

@@ -33,7 +33,25 @@ def release_exists(repo, tag):
         raise RuntimeError('Cannot inspect releases; check GitHub access before retrying')
     return None
 
-def publish(repo, tag, assets, latest, dry_run):
+TEXT_RELEASE_NOTES = '自动校验的本地化资源。文本更新后请重启游戏以载入 MasterDB 更新。\n'
+
+
+def plugin_release_notes(project, version):
+    """Require notes for the exact APK version from the trusted source checkout."""
+    changelog = (project / 'CHANGELOG.md').read_text(encoding='utf-8')
+    sections = re.split(r'^## ([^\n]+)\n', changelog, flags=re.MULTILINE)
+    entries = [sections[i + 1].strip() for i in range(1, len(sections), 2)
+               if sections[i].strip() == version]
+    if len(entries) != 1 or not entries[0]:
+        raise ValueError(f'Missing or duplicate plugin changelog for {version}')
+    return (f'## 插件 {version}\n\n' + entries[0] +
+            '\n\n### 安装与更新\n\n'
+            '- LSPosed：安装本页 APK，启用模块并将作用域设为《偶像荣耀》，然后重启游戏。\n'
+            '- LSPatch：使用新版插件重新修补游戏 APK，再覆盖安装。\n'
+            '- 本页附件是本地化插件；文本资源请在游戏内通过插件更新。\n')
+
+
+def publish(repo, tag, assets, latest, dry_run, *, notes=None):
     if dry_run:
         return {'tag': tag, 'assets': [p.name for p in assets], 'published': False}
     existing = release_exists(repo, tag)
@@ -57,9 +75,9 @@ def publish(repo, tag, assets, latest, dry_run):
             if latest:
                 run(['gh', 'release', 'edit', tag, '--repo', repo, '--latest=true'])
             return {'tag': tag, 'unchanged': True}
-    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as notes:
-        notes.write('自动校验的本地化资源。文本更新后请重启游戏以载入 MasterDB 更新。\n')
-        notes_path = Path(notes.name)
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False) as stream:
+        stream.write(TEXT_RELEASE_NOTES if notes is None else notes)
+        notes_path = Path(stream.name)
     try:
         if not existing:
             run(['gh', 'release', 'create', tag, '--repo', repo, '--draft',
@@ -68,7 +86,7 @@ def publish(repo, tag, assets, latest, dry_run):
         for asset in missing:
             run(['gh', 'release', 'upload', tag, asset, '--repo', repo])
         run(['gh', 'release', 'edit', tag, '--repo', repo, '--draft=false',
-             '--latest=' + ('true' if latest else 'false')])
+             '--latest=' + ('true' if latest else 'false'), '--notes-file', notes_path])
     finally:
         notes_path.unlink(missing_ok=True)
     return {'tag': tag, 'published': True}
@@ -380,9 +398,11 @@ def main():
                      include_master_blobs=True, master_tag=master_tag)
     # Build every necessary asset before publishing anything.
     apk = None
+    apk_notes = None
     version = plugin_version(project)
     existing_apk = None if args.dry_run or args.skip_apk else release_exists(args.repository, 'v' + version)
     if not args.skip_apk and (args.dry_run or needs_apk(existing_apk, version)):
+        apk_notes = plugin_release_notes(project, version)
         if not args.font_bundle.is_file(): raise ValueError('Configured module font bundle is missing')
         target = project / 'app/src/main/assets/idoly-localify/resource-han-rounded.bundle'
         shutil.copyfile(args.font_bundle, target)
@@ -399,7 +419,7 @@ def main():
         base_revision, args.data_branch, migration_paths=migration_paths)
     results = []
     if apk:
-        results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run))
+        results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run, notes=apk_notes))
     results.append(publish(args.repository, 'text-' + manifest['version'],
                            [output / 'text-update.zip', output / 'manifest.json'], True, args.dry_run))
     report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run,

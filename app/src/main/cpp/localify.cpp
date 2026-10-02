@@ -514,6 +514,7 @@ std::string translateElapsed(const std::string& source) {
 // Playback metadata belongs to one successful resource delivery, not merely
 // to a saved alias. All accesses share dictionaryMutex with the UI hooks.
 StorySwapPlaybackTitles activeStorySwapTitles;
+StorySwapPlaybackAssets activeStorySwapAssets;
 std::atomic<uint64_t> storySwapPlaybackGeneration{1};
 uint64_t canvasStorySwapGeneration = 1;
 uint32_t storySwapScreenWeak = 0;
@@ -523,6 +524,7 @@ std::unordered_map<void*, StorySwapLabel> storySwapLabels;
 uint64_t resetStorySwapPlayback() {
     std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
     activeStorySwapTitles = {};
+    activeStorySwapAssets = {};
     ++storySwapPlaybackGeneration;
     for (auto it = storySwapLabels.begin(); it != storySwapLabels.end();) {
         if (gcHandleGetTarget && gcHandleFree && !gcHandleGetTarget(it->second.weak)) {
@@ -553,6 +555,8 @@ bool bindStorySwapScreen(void* self) {
     }
     return false;
 }
+
+#include "story_cast_runtime.inc"
 
 Il2CppString* applyStorySwapTitle(void* self, Il2CppString* text) {
     std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
@@ -1088,6 +1092,7 @@ void hookCanvasWillRender(void* method) {
     const uint64_t captureGeneration = layoutCaptureGeneration.load(std::memory_order_acquire);
     const uint64_t storyGeneration = storySwapPlaybackGeneration.load(std::memory_order_acquire);
     const bool storyChanged = storyGeneration != canvasStorySwapGeneration;
+    if (storyChanged) refreshStorySwapCast();
     const bool textChanged = textGeneration != canvasTextGeneration;
     const bool fontChanged = fontGeneration != canvasFontGeneration;
     const bool captureChanged = captureGeneration != canvasCaptureGeneration &&
@@ -1729,6 +1734,7 @@ bool tryResourceLoad(Il2CppString* resourceName, void* onComplete) {
                         // A nested/newer adventure request owns its own playback.
                         if (storySwapPlaybackGeneration == playbackGeneration) {
                             activeStorySwapTitles = std::move(playbackTitles);
+                            activeStorySwapAssets = {name, alias};
                             ++storySwapPlaybackGeneration;
                         }
                         LOGI("Story swap: %s -> %s; title metadata=%d", name.c_str(), alias.c_str(), activeStorySwapTitles.ready());
@@ -3470,6 +3476,7 @@ bool installMethod(const char* label, void* target, void* replacement, T& origin
 void installTextHooks() {
     if (hooksInstalled.exchange(true)) return;
     int installed = 0;
+    installStorySwapCastHook();
     story_bridge::install([](const char* assembly, const char* ns,
                              const char* klass, const char* name, int count) -> void* {
         const auto* info = methodInfo(assembly, ns, klass, name, count);

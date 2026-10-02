@@ -130,6 +130,27 @@ inline std::string storySwapSource(const std::string& path, const std::string& r
     return storySwapCardName(requested) ? storySwapRead(path).resolve(requested) : requested;
 }
 
+// Publish only after the replacement TXT has been delivered successfully.
+// Cast lookups use the game's asset ID (without adv_ / .txt), not a character
+// inferred from a card name: one story may contain several idols and NPCs.
+struct StorySwapPlaybackAssets {
+    std::string entry, source;
+    std::string castAsset(const std::string& current) const {
+        const auto kind = storySwapKind(entry);
+        if (kind.empty() || kind != storySwapKind(source) || entry == source) return {};
+        const auto assetId = [](const std::string& filename) {
+            auto id = filename.substr(4, filename.size() - 8);
+            if (id.size() > 6 && id.compare(id.size() - 6, 6, "_short") == 0)
+                id.resize(id.size() - 6);
+            return id;
+        };
+        // Short playback shares the full story's character-relation asset ID.
+        const auto entryAsset = assetId(entry);
+        if (current == entryAsset) return assetId(source);
+        return {};
+    }
+};
+
 inline std::string storySwapTitleLines(std::string value, bool flat = false) {
     for (size_t pos = 0; (pos = value.find("\\n", pos)) != std::string::npos;)
         value.replace(pos, 2, "\n");

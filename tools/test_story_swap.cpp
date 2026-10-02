@@ -86,6 +86,16 @@ int main(int argc, char** argv) {
     assert(storySwapTitleReplacement(loveTitles, header, "无关标题").empty());
     const std::string small = root + "ScreenCanvas/ScreenRoot/Header/SmallTitle";
     const std::string loading = root + "StoryFullScreenLoading/Root/Layout/";
+    // The cast lookup follows only the asset whose replacement was delivered.
+    const StorySwapPlaybackAssets cast{"adv_card_ktn_01_01.txt", "adv_card_ngs_15_01.txt"};
+    assert(cast.castAsset("card_ktn_01_01") == "card_ngs_15_01");
+    assert(cast.castAsset("card_ktn_01_02").empty());
+    assert(cast.castAsset("adv_card_ktn_01_01.txt").empty());
+    assert(StorySwapPlaybackAssets{}.castAsset("card_ktn_01_01").empty());
+    assert((StorySwapPlaybackAssets{"adv_card_ktn_01_01.txt", "adv_event_2107_01_02.txt"}.castAsset("card_ktn_01_01").empty()));
+    assert((StorySwapPlaybackAssets{"adv_card_../secret.txt", "adv_card_ngs_15_01.txt"}.castAsset("card_../secret").empty()));
+    assert((StorySwapPlaybackAssets{"adv_card_ktn_01_01.txt", "adv_card_ktn_01_01.txt"}.castAsset("card_ktn_01_01").empty()));
+    assert((StorySwapPlaybackAssets{"adv_card_ktn_01_01_short.txt", "adv_card_ngs_15_01_short.txt"}.castAsset("card_ktn_01_01") == "card_ngs_15_01"));
     const std::string entryScript = "[title title=长濑琴乃 第1话 脚本入口标题]\n";
     const std::string sourceScript = "[title title=白石千纱 第2话 嗡嗡嗡]\n";
     write(R"({"schema_version":2,"entry":"adv_card_ai_13_01.txt","source":"adv_card_ai_14_02.txt","entry_title":"这次是\\n水上摩托\\n啊","source_title":"嗡嗡\\n嗡——","entry_episode":1,"source_episode":2})");

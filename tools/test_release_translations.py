@@ -16,6 +16,32 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, 'run') as run, patch.object(release, 'release_exists') as exists:
             result = release.publish('owner/repo', 'text-a', [self.asset], True, True)
         self.assertFalse(result['published']); run.assert_not_called(); exists.assert_not_called()
+
+    def test_plugin_notes_use_exact_version_and_install_instructions(self):
+        (self.root / 'CHANGELOG.md').write_text('# Changelog\n\n## 0.2.3\n\n- Cast sync\n\n## 0.2.2\n\n- Old fix\n')
+        notes = release.plugin_release_notes(self.root, '0.2.3')
+        self.assertIn('Cast sync', notes)
+        self.assertNotIn('Old fix', notes)
+        self.assertIn('LSPosed', notes)
+        self.assertIn('LSPatch', notes)
+        self.assertNotIn('MasterDB', notes)
+        with self.assertRaisesRegex(ValueError, 'Missing or duplicate'):
+            release.plugin_release_notes(self.root, '0.2.4')
+        (self.root / 'CHANGELOG.md').write_text('## 0.2.3\n\n## 0.2.3\n- Duplicate\n')
+        with self.assertRaisesRegex(ValueError, 'Missing or duplicate'):
+            release.plugin_release_notes(self.root, '0.2.3')
+
+    def test_new_and_resumed_releases_use_supplied_notes(self):
+        for existing in (None, {'draft': True, 'assets': []}):
+            for supplied in (None, 'Plugin changes\n'):
+                bodies = []
+                def command(args):
+                    if '--notes-file' in args:
+                        bodies.append(Path(args[args.index('--notes-file') + 1]).read_text())
+                with patch.object(release, 'release_exists', return_value=existing), patch.object(release, 'run', side_effect=command):
+                    release.publish('owner/repo', 'v0.2.3', [self.asset], False, False, notes=supplied)
+                self.assertTrue(bodies)
+                self.assertTrue(all(body == (release.TEXT_RELEASE_NOTES if supplied is None else supplied) for body in bodies))
     def test_upload_failure_never_publishes_draft(self):
         commands = []
         def command(args):
