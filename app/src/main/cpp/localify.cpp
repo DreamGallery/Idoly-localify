@@ -3979,7 +3979,9 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeInstall(
             LOGE("MasterDB Blob patches unavailable: %s", error.what());
         }
     }
-    il2cppHandle = xdl_open(library.c_str(), RTLD_NOW);
+    // UnityPlayer.loadNative has already loaded libil2cpp.
+    // xdl_open takes XDL_* flags; RTLD_NOW aliases XDL_ALWAYS_FORCE_LOAD.
+    il2cppHandle = xdl_open(library.c_str(), XDL_DEFAULT);
     if (!il2cppHandle) {
         LOGE("Cannot open %s", library.c_str());
         installerCalled = false;
