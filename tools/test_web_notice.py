@@ -10,6 +10,29 @@ PATH = "/notice/" + "a" * 64 + "/index.html"
 
 
 class WebNoticeWorkflowTest(unittest.TestCase):
+    def test_review_accepts_only_new_pages_matching_selected_title(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, reviewed = root / 'source.json', root / 'reviewed.json'
+            old, new = [PATH.replace('a' * 64, c * 64) for c in ('b', 'c')]
+            source.write_text(json.dumps({'pages': {p: {'headline': '開催'} for p in (PATH, old, new)}}))
+            decision = {'schema_version': 1, 'resolutions': {'開催': {
+                'translation': '开启', 'review_method': 'human', 'reason': 'Reviewed title',
+                'candidates': {PATH: '开启', old: '举办'}}}}
+            reviewed.write_text(json.dumps(decision))
+            compiled = {'pages': {PATH: {'開催': '开启'}, old: {'開催': '举办'}, new: {'開催': '开启'}}}
+            before = reviewed.read_bytes()
+            self.assertEqual(headline_aliases(source, compiled, reviewed), [('開催', '开启')])
+            self.assertEqual(reviewed.read_bytes(), before)
+            for translation in ('举办', '举行'):
+                compiled['pages'][new]['開催'] = translation
+                with self.assertRaisesRegex(ValueError, 'Stale or invalid'):
+                    headline_aliases(source, compiled, reviewed)
+            compiled['pages'][new]['開催'] = '开启'
+            del compiled['pages'][old]
+            with self.assertRaisesRegex(ValueError, 'Stale or invalid'):
+                headline_aliases(source, compiled, reviewed)
+
     def test_title_conflicts_require_bound_review_and_keep_page_translations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

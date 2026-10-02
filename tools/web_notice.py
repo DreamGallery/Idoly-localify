@@ -215,7 +215,15 @@ def headline_aliases(source_path: Path, compiled: dict,
         selected = next(iter(variants)) if len(variants) == 1 else None
         if original in resolutions:
             decision = resolutions[original]
-            if (not isinstance(decision, dict) or decision.get("candidates") != pages
+            reviewed_pages = decision.get("candidates") if isinstance(decision, dict) else None
+            # A recurring announcement can add a page using the already reviewed
+            # title. Preserve that decision only when every old candidate is
+            # unchanged and every new page agrees with the selected translation.
+            compatible = (isinstance(reviewed_pages, dict) and bool(reviewed_pages)
+                          and all(pages.get(path) == value for path, value in reviewed_pages.items())
+                          and all(value == decision.get("translation")
+                                  for path, value in pages.items() if path not in reviewed_pages))
+            if (not isinstance(decision, dict) or not compatible
                     or decision.get("translation") not in variants
                     or decision.get("review_method") not in ("assistant", "human")
                     or not isinstance(decision.get("reason"), str) or not decision["reason"].strip()):
