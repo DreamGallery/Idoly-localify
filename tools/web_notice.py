@@ -188,6 +188,46 @@ def build(source_path: Path, translation_path: Path, ui_path: Path,
     return result
 
 
+def reuse_reviewed_new_titles(source_path: Path, translation_path: Path,
+                             ui_path: Path, resolutions_path: Path,
+                             previous_pages: dict) -> int:
+    """Seed new, untranslated headings before machine memory or model requests."""
+    if not resolutions_path.is_file():
+        return 0
+    review = read_json(resolutions_path)
+    if review.get("schema_version") != 1 or not isinstance(review.get("resolutions"), dict):
+        raise ValueError("Invalid notice title resolutions")
+    source = read_json(source_path)["pages"]
+    table = read_json(translation_path)
+    translations = table.setdefault("pages", {})
+    ui = read_json(ui_path)
+    count = 0
+    for original, decision in review["resolutions"].items():
+        if not isinstance(decision, dict):
+            continue  # The final title validator reports invalid decisions.
+        candidates = decision.get("candidates")
+        selected = decision.get("translation")
+        if (not isinstance(candidates, dict) or not candidates
+                or selected not in candidates.values()
+                or decision.get("review_method") not in ("human", "assistant")
+                or not isinstance(decision.get("reason"), str) or not decision["reason"].strip()
+                or any(translations.get(page, {}).get(original, ui.get(original)) != value
+                       for page, value in candidates.items())):
+            continue
+        validate(original, selected, f"notice_heading:{original}")
+        for page, data in source.items():
+            if (page in candidates or original in previous_pages.get(page, {}).get("texts", [])
+                    or original not in data.get("texts", [])
+                    or original not in [data.get("headline"), *data.get("entry_titles", [])]
+                    or original in translations.get(page, {})):
+                continue
+            translations.setdefault(page, {})[original] = selected
+            count += 1
+    if count:
+        write_json(translation_path, table)
+    return count
+
+
 def headline_aliases(source_path: Path, compiled: dict,
                      resolutions_path: Path | None = None,
                      conflict_report: Path | None = None) -> list[tuple[str, str]]:

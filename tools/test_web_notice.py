@@ -3,13 +3,44 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from web_notice import build, headline_aliases, import_pages, import_snapshot, notice_path
+from web_notice import build, headline_aliases, import_pages, import_snapshot, notice_path, reuse_reviewed_new_titles
 
 
 PATH = "/notice/" + "a" * 64 + "/index.html"
 
 
 class WebNoticeWorkflowTest(unittest.TestCase):
+    def test_review_seeds_only_new_untranslated_headings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translation, ui, reviewed = [root / name for name in
+                ('source.json', 'translation.json', 'ui.json', 'reviewed.json')]
+            old, new, body, existing = ['/' + c for c in ('old', 'new', 'body', 'existing')]
+            old_pages = {old: {'texts': ['開催'], 'headline': '開催'},
+                         existing: {'texts': ['開催'], 'headline': '開催'}}
+            pages = {**old_pages, new: {'texts': ['開催'], 'headline': '開催'},
+                     body: {'texts': ['開催'], 'headline': 'Other'}}
+            source.write_text(json.dumps({'pages': pages}))
+            ui.write_text('{}')
+            original_table = {'pages': {old: {'開催': '开启'}}}
+            translation.write_text(json.dumps(original_table))
+            reviewed.write_text(json.dumps({'schema_version': 1, 'resolutions': {'開催': {
+                'translation': '开启', 'review_method': 'human', 'reason': 'Reviewed',
+                'candidates': {old: '开启'}}}}))
+            def reuse():
+                return reuse_reviewed_new_titles(source, translation, ui, reviewed, old_pages)
+            self.assertEqual(reuse(), 1)
+            self.assertEqual(json.loads(translation.read_text())['pages'],
+                             {old: {'開催': '开启'}, new: {'開催': '开启'}})
+            self.assertEqual(reuse(), 0)
+            # Existing translations, including changed reviewed pages, stay untouched.
+            table = {'pages': {old: {'開催': '举办'}, new: {'開催': '新译'}}}
+            translation.write_text(json.dumps(table))
+            self.assertEqual(reuse(), 0)
+            self.assertEqual(json.loads(translation.read_text()), table)
+            translation.write_text(json.dumps({'pages': {old: {'開催': '举办'}}}))
+            self.assertEqual(reuse(), 0)
+
     def test_review_accepts_only_new_pages_matching_selected_title(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

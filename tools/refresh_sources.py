@@ -252,7 +252,7 @@ def run(args) -> dict:
             command("notice-pages", [*notice_cli, "archive-pages", "--input", index,
                     "--cache-dir", args.toolkit_dir / "cache/notice/refresh-page-cache", "--output", pages,
                     "--report", args.work_dir / "notice-fetch-report.json", "--refresh"], args.toolkit_dir)
-        from web_notice import import_pages
+        from web_notice import import_pages, reuse_reviewed_new_titles
         summary["stage"] = "notice-import"
         notice_source = args.translations_dir / "notice/source.json"
         previous_pages = read_json(notice_source, {"pages": {}})["pages"]
@@ -262,6 +262,10 @@ def run(args) -> dict:
             "new_texts": sum(len(set(v["texts"]) - set(previous_pages.get(k, {}).get("texts", [])))
                              for k, v in incoming_pages.items())}
         import_pages(pages, notice_source, index)
+        summary["notice_titles_reused"] = reuse_reviewed_new_titles(
+            notice_source, args.translations_dir / "notice/zh-Hans.json",
+            args.translations_dir / "ui/zh-Hans.json",
+            args.translations_dir / "notice/title-resolutions.json", previous_pages)
 
         csv = load_module("Hoshimi_Teleprompter", "src.csv_workflow")
         master = load_module("Hoshimi_Teleprompter", "src.master_workflow")
