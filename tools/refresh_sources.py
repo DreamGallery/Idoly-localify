@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -126,6 +127,26 @@ def seed_result_log(source: Path, destination: Path):
         destination.write_bytes(source.read_bytes())
 
 
+def translate_notices(command, primary, protected, work_dir):
+    """Resume only failed nodes with syntax protection after a completed batch."""
+    if command('translate-notice', primary, allow_failure=True) == 0:
+        return
+    log = work_dir / 'translate-notice.log'
+    # A finished translator prints this even when some validated fields remain.
+    # Initialization, credential and whole-batch API failures must not be hidden.
+    text = log.read_text(encoding='utf-8') if log.is_file() else ''
+    if not re.search(r'Notice: \d+ new strings, \d+ JSON values updated, \d+ pending', text):
+        raise RuntimeError('Notice translation failed before resumable results were recorded')
+    if 'Translation API returned HTTP ' in text or 'Translation API connection failed' in text:
+        raise RuntimeError('Notice translation API failed; successful results retained')
+    for attempt, size in enumerate((4, 1), 1):
+        print(f'Notice validation retry {attempt}: protecting source syntax; successful nodes are reused', flush=True)
+        if command(f'translate-notice-retry-{attempt}',
+                   [*protected, '--batch-size', str(size)], allow_failure=True) == 0:
+            return
+    raise RuntimeError('Notice validation still incomplete after protected retries')
+
+
 def fetched_state(args) -> dict:
     """Bind reuse to the exact successful official batch, excluding translations."""
     def digest(path):
@@ -164,7 +185,7 @@ def run(args) -> dict:
         return summary
     args.work_dir.mkdir(parents=True, exist_ok=True)
 
-    def command(stage, argv, cwd=ROOT):
+    def command(stage, argv, cwd=ROOT, *, allow_failure=False):
         summary["stage"] = stage
         write_json(args.summary, summary)
         # Public Actions logs expose progress, never arguments or private output.
@@ -172,9 +193,10 @@ def run(args) -> dict:
         with (args.work_dir / (stage + ".log")).open("w", encoding="utf-8") as log:
             result = subprocess.run([str(x) for x in argv], cwd=cwd, stdout=log,
                                     stderr=subprocess.STDOUT, check=False)
-        if result.returncode:
+        if result.returncode and not allow_failure:
             raise RuntimeError(f"Stage {stage} failed; see private work directory")
-        print(f"Source refresh: {stage} completed", flush=True)
+        print(f"Source refresh: {stage} {'failed' if result.returncode else 'completed'}", flush=True)
+        return result.returncode
 
     try:
         receipt = args.work_dir / "fetched-receipt.json"
@@ -298,9 +320,12 @@ def run(args) -> dict:
                 for page, text in pending:
                     approved.setdefault(page, []).append(text)
                 write_json(review, {"source_sha256": notice.checksum(notice_source), "pages": approved})
-                command("translate-notice", [*translator, "notice-translate", "--source", notice_args[0],
+                notice_options = ["--source", notice_args[0],
                         "--translations", notice_args[1], "--ui", notice_args[2], "--log-file", notice_log,
-                        "--review-list", review, *api_args])
+                        "--review-list", review, *api_args]
+                translate_notices(command, [*translator, "notice-translate", *notice_options],
+                                  [args.python, args.translator_dir / 'notice_repair.py', *notice_options],
+                                  args.work_dir)
             credits.apply_policy(notice_args[0], notice_args[1], initial_notice, notice_log,
                                  args.work_dir / "notice-credit-report.json")
         summary["pending_after"] = pending_counts()

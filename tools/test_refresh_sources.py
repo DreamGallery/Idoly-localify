@@ -10,6 +10,46 @@ import refresh_sources as refresh
 
 
 class RefreshSourceTests(unittest.TestCase):
+    def test_notice_retry_only_after_resumable_partial_translation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'translate-notice.log').write_text('Notice: 672 new strings, 672 JSON values updated, 5 pending')
+            calls = []
+            def command(stage, argv, **kwargs):
+                calls.append((stage, argv))
+                return 0 if len(calls) == 3 else 1
+            refresh.translate_notices(command, ['normal'], ['protected', '--log-file', 'same-log'], root)
+            self.assertEqual([c[0] for c in calls], ['translate-notice', 'translate-notice-retry-1', 'translate-notice-retry-2'])
+            self.assertEqual(calls[1][1][-2:], ['--batch-size', '4'])
+            self.assertEqual(calls[2][1][-2:], ['--batch-size', '1'])
+
+    def test_notice_retry_never_hides_initialization_or_api_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for text in ('bad configuration', 'Translation API returned HTTP 401\nNotice: 0 new strings, 0 JSON values updated, 5 pending'):
+                (root / 'translate-notice.log').write_text(text)
+                with patch('builtins.print'), patch.object(refresh, 'read_json'):
+                    calls = []
+                    def command(*args, **kwargs):
+                        calls.append(args)
+                        return 1
+                    with self.assertRaises(RuntimeError):
+                        refresh.translate_notices(command, ['normal'], ['protected'], root)
+                    self.assertEqual(len(calls), 1)
+
+    def test_notice_retry_success_skips_fallback_and_exhaustion_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            calls = []
+            def success(*args, **kwargs):
+                calls.append(args)
+                return 0
+            refresh.translate_notices(success, ['normal'], ['protected'], root)
+            self.assertEqual(len(calls), 1)
+            (root / 'translate-notice.log').write_text('Notice: 0 new strings, 0 JSON values updated, 5 pending')
+            with self.assertRaisesRegex(RuntimeError, 'still incomplete'):
+                refresh.translate_notices(lambda *a, **k: 1, ['normal'], ['protected'], root)
+
     def test_reuse_receipt_binds_sources_but_not_translations(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
