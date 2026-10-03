@@ -84,6 +84,14 @@ class ReleaseMigrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.prepare_collaboration_stage(self.repo, self.source, self.csv, self.work)
         self.assertEqual(self.snapshot(), before)
+    def test_refresh_does_not_execute_newly_fetched_migration_code(self):
+        pinned = self.work / 'pinned-migration.py'
+        shutil.copyfile(self.repo / 'scripts/story_migration.py', pinned)
+        (self.repo / 'scripts/story_migration.py').write_text('raise RuntimeError("untrusted new code")')
+        stage, receipt, _ = release.prepare_collaboration_stage(
+            self.repo, self.source, self.csv, self.work, migration_script=pinned)
+        self.assertEqual(receipt['source_changed'], [self.stem])
+        self.assertIn('untrusted new code', (stage / 'scripts/story_migration.py').read_text())
     def test_strict_paths_do_not_allow_code_or_traversal(self):
         for path in ('scripts/evil.py', '.github/workflows/x.yml', 'records/../../evil.json',
                      'story/human/../../evil.csv', 'story/human//a.csv', 'archive/backups/bad/story/human/a.csv'):

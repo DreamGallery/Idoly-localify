@@ -134,16 +134,49 @@ def export_data_path(path):
             (path.startswith('story/ai/') and path.endswith('.csv')))
 
 
-def sync_git(repository, paths, expected_head, branch='main', migration_paths=()):
-    def git(*args):
-        return subprocess.run(['git', '-C', str(repository), '-c', 'core.quotepath=false', '-c', 'credential.helper=',
-                               '-c', 'credential.helper=!gh auth git-credential', *args], check=True,
-                              text=True, capture_output=True).stdout.strip()
-    if not paths: return None
+class TranslationBranchAdvanced(ValueError):
+    """The validated snapshot lost a race; rebuild against newer collaboration."""
+
+
+def repository_git(repository, *args):
+    return subprocess.run(['git', '-C', str(repository), '-c', 'core.quotepath=false', '-c', 'credential.helper=',
+                           '-c', 'credential.helper=!gh auth git-credential', *args], check=True,
+                          text=True, capture_output=True).stdout.strip()
+
+
+def refresh_collaboration_checkout(repository, expected_head, branch='main'):
+    """Fast-forward clean data to human updates without replacing machine inputs."""
+    git = lambda *args: repository_git(repository, *args)
+    if git('rev-parse', 'HEAD') != expected_head:
+        raise ValueError('Translation checkout changed during release')
+    if git('status', '--porcelain', '--untracked-files=all'):
+        raise ValueError('Translation checkout has unexpected local changes')
+    git('fetch', 'origin', branch)
+    latest = git('rev-parse', 'FETCH_HEAD')
+    if latest == expected_head:
+        return latest
+    # A rewritten branch is not an ordinary collaboration update.
+    git('merge-base', '--is-ancestor', expected_head, latest)
+    paths = git('diff', '--no-renames', '--name-only', '-z', expected_head, latest).split('\0')
+    protected = [p for p in paths if p == 'upstream.json' or p.startswith('story/ai/') or
+                 any(p.startswith(directory + '/') for directory in JSON_PATHS)]
+    if protected:
+        raise ValueError('Machine/source inputs changed concurrently; a fresh source pass is required: ' +
+                         ', '.join(protected[:5]))
+    # Newly fetched scripts are never executed: the release driver pins its
+    # migration implementation before refreshing this data checkout.
+    git('checkout', '--detach', latest)
+    return latest
+
+
+def sync_git(repository, paths, expected_head, branch='main', migration_paths=(), source_dir=None):
+    git = lambda *args: repository_git(repository, *args)
     if git('rev-parse', 'HEAD') != expected_head: raise ValueError('Translation checkout changed during release')
     git('fetch', 'origin', branch)
     if git('rev-parse', 'FETCH_HEAD') != expected_head:
-        raise ValueError('Translation branch advanced; retry on latest data (no force push)')
+        raise TranslationBranchAdvanced('Translation branch advanced; rebuild on latest collaboration (no force push)')
+    # Even a no-change release must check that its compiled inputs are current.
+    if not paths: return None
     # Migration grants apply only to explicit validated receipt paths.
     allowed_migrations = set(migration_paths)
     if any(not migration_data_path(p) for p in allowed_migrations):
@@ -152,13 +185,45 @@ def sync_git(repository, paths, expected_head, branch='main', migration_paths=()
         if not (export_data_path(path) or path in allowed_migrations):
             raise ValueError(f'Not an export data path: {path}')
     paths = sorted(set(paths))
+    if source_dir is not None:
+        # Keep the input checkout clean, including when a push loses a race.
+        # Only this disposable worktree receives the validated output files.
+        with tempfile.TemporaryDirectory(prefix='idoly-data-commit-') as directory:
+            checkout = Path(directory) / 'checkout'
+            git('worktree', 'add', '--detach', str(checkout), expected_head)
+            try:
+                for relative in paths:
+                    source, target = source_dir / relative, checkout / relative
+                    for root, item in ((source_dir, source), (checkout, target)):
+                        if any(p.is_symlink() for p in (item, *item.parents) if p == root or root in p.parents):
+                            raise ValueError('Symlinked localization commit path')
+                    if source.is_file():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source, target)
+                    elif source.exists():
+                        raise ValueError('Localization commit source is not a file')
+                    else:
+                        target.unlink()
+                return sync_git(checkout, paths, expected_head, branch, migration_paths)
+            finally:
+                git('worktree', 'remove', '--force', str(checkout))
     for offset in range(0, len(paths), 100):
         git('add', '--', *paths[offset:offset + 100])
     staged = git('diff', '--cached', '--no-renames', '--name-only').splitlines()
     if set(staged) != set(paths): raise ValueError('Unexpected staged files; refusing data commit')
     git('-c', 'user.name=Idoly localization bot', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
         'commit', '-m', 'Update verified localization sources')
-    git('push', 'origin', f'HEAD:refs/heads/{branch}')
+    try:
+        git('push', 'origin', f'HEAD:refs/heads/{branch}')
+    except subprocess.CalledProcessError:
+        # Retry only an observed branch race. Authentication/network/policy
+        # failures keep their original error and are never blindly retried.
+        git('fetch', 'origin', branch)
+        if git('rev-parse', 'FETCH_HEAD') == git('rev-parse', 'HEAD'):
+            return git('rev-parse', 'HEAD')  # Push completed despite a lost response.
+        if git('rev-parse', 'FETCH_HEAD') != expected_head:
+            raise TranslationBranchAdvanced('Translation branch advanced during push; rebuild on latest collaboration') from None
+        raise
     return git('rev-parse', 'HEAD')
 
 def main():

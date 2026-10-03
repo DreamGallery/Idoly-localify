@@ -158,18 +158,19 @@ def refresh_and_import_machine(repository, source, csv_dir, project, command, *,
     return receipt
 
 
-def prepare_collaboration_stage(repository, source, csv_dir, work):
+def prepare_collaboration_stage(repository, source, csv_dir, work, migration_script=None):
     """Migrate a private copy; never mutate the real data checkout before validation."""
     import importlib.util
     from import_collaboration import read_csv, safe_files
     from story_csv_paths import classify
     from export_translation_sources import migration_data_path
-    script = repository / 'scripts/story_migration.py'
+    script = migration_script or repository / 'scripts/story_migration.py'
     if script.is_symlink() or not script.is_file():
         raise ValueError('Trusted story migration script is missing')
     spec = importlib.util.spec_from_file_location('release_story_migration', script)
     migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
+    # Execute the pinned trusted module without writing __pycache__ into data.
+    exec(compile(script.read_bytes(), str(script), 'exec'), migration.__dict__)
     stage = work / 'collaboration-stage'
     view = work / 'classified-original-csv'
     for target in (stage, view):
@@ -231,6 +232,19 @@ def install_collaboration_stage(repository, stage, paths, migration_paths, basel
                     temp = Path(stream.name); stream.write(data)
                 temp.replace(target)
     return sorted(changes)
+
+
+def retry_collaboration_release(repository, expected_head, branch, finalize, max_attempts=3):
+    """Reuse translated machine data; recompile the latest human layer on races."""
+    from export_translation_sources import TranslationBranchAdvanced, refresh_collaboration_checkout
+    for attempt in range(1, max_attempts + 1):
+        expected_head = refresh_collaboration_checkout(repository, expected_head, branch)
+        try:
+            return finalize(expected_head)
+        except TranslationBranchAdvanced:
+            if attempt == max_attempts:
+                raise TranslationBranchAdvanced(f'Collaboration kept changing across {max_attempts} build attempts; no stale release published') from None
+            print(f'Collaboration advanced during build; refreshing human data and rebuilding ({attempt + 1}/{max_attempts})', flush=True)
 
 
 def configure_api(config):
@@ -378,48 +392,70 @@ def main():
         if origin.exists(): shutil.copytree(origin, machine / 'translations' / relative)
     shutil.copytree(csv_dir, machine / 'csv')
     skip_stories = [stem for stem, value in receipt['stories'].items() if value['layer'] != 'ai']
-    stage, migration_receipt, migration_baseline = prepare_collaboration_stage(
-        args.repository_dir, source, csv_dir, work)
-    receipt = import_stories(stage, csv_dir, source, csv_dir, project, human_only=True)
-    validate_story_coverage(csv_dir)
-    (work / 'collaboration-final.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
-    run([args.python, project / 'tools/pipeline.py', 'build'], project)
-    run([args.python, project / 'tools/pipeline.py', 'verify'], project)
-    summary = json.loads(refresh_summary.read_text())
-    if summary.get('complete') is not True or any(summary.get('pending_after', {}).values()):
-        raise ValueError('Official source refresh incomplete; refusing release')
-    master_tag = Path(summary['master_tag'])
-    run([args.python, project / 'tools/master_blob_patches.py', '--master-tag', master_tag,
-         '--solis-dir', args.solis_dir, '--all-tables'], project)
-    from build_text_update import build
-    output = project / '.analysis/scheduled-release'
-    manifest = build(project, output, 'https://github.com/' + args.repository,
-                     include_stories=True, github_repository=args.repository,
-                     include_master_blobs=True, master_tag=master_tag)
-    # Build every necessary asset before publishing anything.
-    apk = None
-    apk_notes = None
-    version = plugin_version(project)
-    existing_apk = None if args.dry_run or args.skip_apk else release_exists(args.repository, 'v' + version)
-    if not args.skip_apk and (args.dry_run or needs_apk(existing_apk, version)):
-        apk_notes = plugin_release_notes(project, version)
-        if not args.font_bundle.is_file(): raise ValueError('Configured module font bundle is missing')
-        target = project / 'app/src/main/assets/idoly-localify/resource-han-rounded.bundle'
-        # The persistent runner bundle is a schema template, not the selected
-        # typeface. Rebuild it from the source-controlled, hash-pinned default.
-        from prepare_module_font import prepare
-        prepare(args.font_bundle, target, cache=work / 'fonts')
-        run([project / 'gradlew', ':app:assembleRelease', '--no-daemon'], project)
-        apk = output / f'idoly-localify-{version}.apk'
-        shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)
-    exported = export_sources(machine, machine / 'csv', source, stage,
-                              skip_stories, summary, apply=True)
-    migration_paths = migration_receipt['changed_paths']
-    changed = install_collaboration_stage(args.repository_dir, stage,
-        set(exported) | set(migration_paths), migration_paths, migration_baseline,
-        apply=not args.dry_run)
-    data_commit = None if args.dry_run else sync_git(args.repository_dir, changed,
-        base_revision, args.data_branch, migration_paths=migration_paths)
+    # Freeze executable migration code from the original trusted checkout.
+    # Subsequent refreshes import only newer collaboration data.
+    original_migration = args.repository_dir / 'scripts/story_migration.py'
+    if original_migration.is_symlink() or not original_migration.is_file():
+        raise ValueError('Trusted story migration script is missing')
+    migration_script = work / 'pinned-story-migration.py'
+    shutil.copyfile(original_migration, migration_script)
+
+    def finalize(snapshot_revision):
+        # Start each attempt from the machine snapshot, not the previous human
+        # overlay. Revoked/edited titles must not leak into the next attempt.
+        copy_data(machine / 'translations', project)
+        if csv_dir.is_symlink(): raise ValueError('Symlinked release CSV directory')
+        shutil.rmtree(csv_dir)
+        shutil.copytree(machine / 'csv', csv_dir)
+        stage, migration_receipt, migration_baseline = prepare_collaboration_stage(
+            args.repository_dir, source, csv_dir, work, migration_script=migration_script)
+        receipt = import_stories(stage, csv_dir, source, csv_dir, project, human_only=True)
+        validate_story_coverage(csv_dir)
+        (work / 'collaboration-final.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
+        run([args.python, project / 'tools/pipeline.py', 'build'], project)
+        run([args.python, project / 'tools/pipeline.py', 'verify'], project)
+        summary = json.loads(refresh_summary.read_text())
+        if summary.get('complete') is not True or any(summary.get('pending_after', {}).values()):
+            raise ValueError('Official source refresh incomplete; refusing release')
+        master_tag = Path(summary['master_tag'])
+        run([args.python, project / 'tools/master_blob_patches.py', '--master-tag', master_tag,
+             '--solis-dir', args.solis_dir, '--all-tables'], project)
+        from build_text_update import build
+        output = project / '.analysis/scheduled-release'
+        manifest = build(project, output, 'https://github.com/' + args.repository,
+                         include_stories=True, github_repository=args.repository,
+                         include_master_blobs=True, master_tag=master_tag)
+        # Build every necessary asset before publishing anything.
+        apk = None
+        apk_notes = None
+        version = plugin_version(project)
+        existing_apk = None if args.dry_run or args.skip_apk else release_exists(args.repository, 'v' + version)
+        if not args.skip_apk and (args.dry_run or needs_apk(existing_apk, version)):
+            apk_notes = plugin_release_notes(project, version)
+            if not args.font_bundle.is_file(): raise ValueError('Configured module font bundle is missing')
+            target = project / 'app/src/main/assets/idoly-localify/resource-han-rounded.bundle'
+            # The persistent runner bundle is a schema template, not the selected
+            # typeface. Rebuild it from the source-controlled, hash-pinned default.
+            from prepare_module_font import prepare
+            prepare(args.font_bundle, target, cache=work / 'fonts')
+            run([project / 'gradlew', ':app:assembleRelease', '--no-daemon'], project)
+            apk = output / f'idoly-localify-{version}.apk'
+            shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)
+        exported = export_sources(machine, machine / 'csv', source, stage,
+                                  skip_stories, summary, apply=True)
+        migration_paths = migration_receipt['changed_paths']
+        changed = install_collaboration_stage(args.repository_dir, stage,
+            set(exported) | set(migration_paths), migration_paths, migration_baseline,
+            apply=False)
+        data_commit = None if args.dry_run else sync_git(args.repository_dir, changed,
+            snapshot_revision, args.data_branch, migration_paths=migration_paths, source_dir=stage)
+        return manifest, apk, apk_notes, data_commit, changed, output, version
+
+    if args.dry_run:
+        finalized = finalize(base_revision)
+    else:
+        finalized = retry_collaboration_release(args.repository_dir, base_revision, args.data_branch, finalize)
+    manifest, apk, apk_notes, data_commit, changed, output, version = finalized
     results = []
     if apk:
         results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run, notes=apk_notes))
