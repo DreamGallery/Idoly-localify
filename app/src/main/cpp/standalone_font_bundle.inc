@@ -63,7 +63,7 @@ void* loadStandaloneRhrFont(bool report) {
         }
         bundleHandle = gcHandleNew(bundle, false);
     }
-    // The build tool gives the bundle a stable, case-insensitive asset key.
+    // Keep the historical asset key stable across typeface upgrades.
     void* args[] = {stringNew("localify-resourcehanroundedsc-extrabold"),
                     typeGetObject(classGetType(fontClass))};
     void* font = runtimeInvoke(loadAsset, bundle, args, &exception);
@@ -75,7 +75,7 @@ void* loadStandaloneRhrFont(bool report) {
     if (valid && setCachedFontRetention(font, true)) {
         loadedCjkOnlyFontHandle = gcHandleNew(font, false);
         if (loadedCjkOnlyFontHandle) {
-            LOGI("Loaded standalone RHR font from module bundle (%lld bytes)", static_cast<long long>(size));
+            LOGI("Loaded standalone replacement font from module bundle (%lld bytes)", static_cast<long long>(size));
             return font;
         }
     }
@@ -87,6 +87,6 @@ void* loadStandaloneRhrFont(bool report) {
     runtimeInvoke(unload, bundle, unloadArgs, &exception);
     if (bundleHandle && gcHandleFree) gcHandleFree(bundleHandle);
     bundleHandle = 0;
-    if (report) LOGE("Standalone bundle did not provide a usable RHR Font");
+    if (report) LOGE("Standalone bundle did not provide a usable replacement Font");
     return nullptr;
 }

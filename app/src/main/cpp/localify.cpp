@@ -320,6 +320,7 @@ void diagnoseForumTitleGeometry();
 void diagnoseHomeTalkGlyph(void* self, const char* stage);
 void synchronizeTmpRendererMaterial(void* self);
 void restoreStoryNameColor(void* textObject);
+void applyStorySubtitleLayout(void* textObject);
 void refreshProfileMaterials();
 void* findClass(const char* imageName, const char* nameSpace, const char* className);
 // Registered only from the TextMeshProUGUI lifecycle hooks. All access is on
@@ -1428,6 +1429,7 @@ void hookTmpPreRender(void* self, void* method) {
     refreshLoveEpisodeLabel(self);
     // Resolve after set_text and again after prefab font resets, before mesh creation.
     refreshDefaultUiFont(self);
+    applyStorySubtitleLayout(self);
     fitPanoramaLabels(self);
     alignGallerySearchFooter(self);
     if (self && fontProfileGeneration.load() > 1 && runtimeInvoke) {
@@ -2045,6 +2047,57 @@ const MethodInfoHead* instantiateUnityObject() {
 enum class StoryStyle { Subtitle, SpeakerName };
 
 std::unordered_map<void*, uint32_t> storyMaterials[2];
+
+void applyStorySubtitleLayout(void* self) {
+    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
+        fontBaselines.find(self) == fontBaselines.end()) return;
+    auto* baseline = fontBaseline(self);
+    // Registered only after the original subtitle size/material guards pass.
+    // Never infer the role from a user-adjusted size or a generic label name.
+    if (!baseline || !baseline->values.count("story_subtitle_size")) return;
+    static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
+    static const auto setSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_fontSize", 1);
+    static const auto getSpacing = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_characterSpacing", 0);
+    static const auto setSpacing = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_characterSpacing", 1);
+    static const auto getAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_enableAutoSizing", 0);
+    static const auto setAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_enableAutoSizing", 1);
+    if (!getSize || !setSize || !getSpacing || !setSpacing || !getAuto || !setAuto) return;
+    void* error = nullptr;
+    void* sizeBox = runtimeInvoke(getSize, self, nullptr, &error);
+    if (error || !sizeBox) return;
+    const float size = *static_cast<float*>(objectUnbox(sizeBox));
+    void* spacingBox = runtimeInvoke(getSpacing, self, nullptr, &error);
+    if (error || !spacingBox) return;
+    const float spacing = *static_cast<float*>(objectUnbox(spacingBox));
+    void* autoBox = runtimeInvoke(getAuto, self, nullptr, &error);
+    if (error || !autoBox) return;
+    const bool autoSize = *static_cast<bool*>(objectUnbox(autoBox));
+    float desiredSize, desiredSpacing;
+    {
+        std::lock_guard<std::mutex> lock(profileMutex);
+        desiredSize = fontProfiles.value("ordinary_story_subtitle", "font_size_unity");
+        desiredSpacing = fontProfiles.value("ordinary_story_subtitle", "character_spacing_unity");
+    }
+    if (autoSize) {
+        bool disabled = false;
+        void* args[] = {&disabled};
+        runtimeInvoke(setAuto, self, args, &error);
+    }
+    if (!error && std::fabs(size - desiredSize) > 0.01f) {
+        void* args[] = {&desiredSize};
+        runtimeInvoke(setSize, self, args, &error);
+    }
+    if (!error && std::fabs(spacing - desiredSpacing) > 0.01f) {
+        void* args[] = {&desiredSpacing};
+        runtimeInvoke(setSpacing, self, args, &error);
+    }
+    const float generation = static_cast<float>(fontProfileGeneration.load());
+    if (!error && baseline->values["story_subtitle_layout_generation"] != generation) {
+        baseline->values["story_subtitle_layout_generation"] = generation;
+        LOGI("Story subtitle layout: size=%.2f->%.2f spacing=%.2f->%.2f auto=%d",
+             size, desiredSize, spacing, desiredSpacing, autoSize);
+    }
+}
 
 bool applyStoryMaterial(void* material, StoryStyle style) {
     const char* id = style == StoryStyle::SpeakerName ? "ordinary_story_name" : "ordinary_story_subtitle";
@@ -3134,9 +3187,13 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
             float originalWidth = 0.0f;
             if (!labelException && materialFloat(sourceMaterial, "_OutlineWidth", originalWidth)) {
                 const std::string labelName = utf8(label);
+                const float subtitleSize = labelName == "Message Label"
+                    ? knownFontValue(textObject, "story_subtitle_size", size) : size;
+                const float subtitleWidth = labelName == "Message Label"
+                    ? knownFontValue(textObject, "story_subtitle_outline", originalWidth) : originalWidth;
                 const bool subtitle = labelName == "Message Label" &&
-                    size >= 50.0f && size <= 58.0f &&
-                    originalWidth >= 0.30f && originalWidth <= 0.40f;
+                    subtitleSize >= 50.0f && subtitleSize <= 58.0f &&
+                    subtitleWidth >= 0.30f && subtitleWidth <= 0.40f;
                 const bool speakerName = labelName == "Name Label" &&
                     size >= 30.0f && size <= 34.0f &&
                     originalWidth >= 0.45f && originalWidth <= 0.55f;
@@ -3144,7 +3201,13 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                     const StoryStyle style = subtitle ? StoryStyle::Subtitle :
                         StoryStyle::SpeakerName;
                     void* isolated = storyMaterial(styledMaterial, style);
-                    if (isolated) assignedMaterial = isolated;
+                    if (isolated) {
+                        assignedMaterial = isolated;
+                        if (subtitle) {
+                            originalFontValue(textObject, "story_subtitle_size", size);
+                            originalFontValue(textObject, "story_subtitle_outline", originalWidth);
+                        }
+                    }
                     else LOGE("Cannot isolate story material");
                 }
             }
@@ -3199,6 +3262,7 @@ void routeTmpFontAfterSetter(void* textObject, Il2CppString* rendered) {
     };
     if (logTarget) report("before-route");
     updateFont(textObject);
+    applyStorySubtitleLayout(textObject);
     if (logTarget) report("after-route");
 }
 
@@ -3369,6 +3433,7 @@ void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
     void* beforeFont = trackSubmit ? readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_font") : nullptr;
     void* beforeMaterial = trackSubmit ? readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_fontSharedMaterial") : nullptr;
     updateFont(self, false, &useRhr, messagePicker, forumTitle ? chars : nullptr, forumTitle ? count : 0);
+    applyStorySubtitleLayout(self);
     if (trackSubmit) {
         void* afterFont = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_font");
         void* afterMaterial = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_fontSharedMaterial");

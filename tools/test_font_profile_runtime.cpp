@@ -11,6 +11,31 @@ int main() {
     assert(profile.assign(changed.dump()));
     assert(profile.value("ordinary_story_subtitle", "outline_width") == 0.6f);
     const std::string good = profile.dump();
+    auto oldSubtitle = nlohmann::json::parse(good);
+    oldSubtitle["profiles"][0]["adjust"].erase("font_size_unity");
+    oldSubtitle["profiles"][0]["adjust"].erase("character_spacing_unity");
+    assert(profile.assign(oldSubtitle.dump()));
+    assert(profile.dump() == good); // Existing outline survives new layout defaults.
+    oldSubtitle["profiles"][0]["adjust"].erase("face_dilate");
+    assert(!profile.assign(oldSubtitle.dump())); // Do not backfill unrelated required fields.
+    assert(profile.dump() == good);
+    auto subtitleLayout = nlohmann::json::parse(good);
+    subtitleLayout["profiles"][0]["adjust"]["font_size_unity"] = 66;
+    subtitleLayout["profiles"][0]["adjust"]["character_spacing_unity"] = -2.5;
+    assert(profile.assign(subtitleLayout.dump()));
+    assert(profile.value("ordinary_story_subtitle", "font_size_unity") == 66);
+    assert(profile.value("ordinary_story_subtitle", "character_spacing_unity") == -2.5f);
+    auto badLayout = subtitleLayout;
+    badLayout["profiles"][0]["adjust"]["font_size_unity"] = 0;
+    assert(!profile.assign(badLayout.dump()));
+    assert(profile.dump() == subtitleLayout.dump());
+    badLayout = subtitleLayout;
+    badLayout["profiles"][0]["adjust"]["character_spacing_unity"] = true;
+    assert(!profile.assign(badLayout.dump()));
+    badLayout = subtitleLayout;
+    badLayout["profiles"][1]["adjust"]["font_size_unity"] = 40;
+    assert(!profile.assign(badLayout.dump())); // Name layout stays intentionally unavailable.
+    assert(profile.assign(good));
     auto legacy = nlohmann::json::parse(good);
     legacy["font"] = {{"mode", "replace-all"}, {"unity_font_name", "FOT-UDKakugo_LargePro-DB"}};
     assert(profile.assign(legacy.dump()));
@@ -85,7 +110,12 @@ int main() {
     assert(!profile.assign("not json"));
     assert(profile.dump() == good);
     assert(profile.assign(kFontProfileDefaults));
-    assert(profile.value("ordinary_story_subtitle", "outline_width") == 0.86f);
+    assert(profile.value("ordinary_story_subtitle", "outline_width") == 1.0f);
+    assert(profile.value("ordinary_story_subtitle", "face_dilate") == 0.9f);
+    assert(profile.value("ordinary_story_subtitle", "font_size_unity") == 50.0f);
+    assert(profile.value("ordinary_story_subtitle", "character_spacing_unity") == 8.0f);
+    assert(profile.value("ordinary_story_name", "outline_width") == 0.5f);
+    assert(profile.value("ordinary_story_name", "face_dilate") == 0.5f);
     auto controls = nlohmann::json::parse(profile.dump());
     for (auto& item : controls["profiles"]) {
         if (item["id"] == "shop_new_arrivals") item["adjust"]["content_width_ratio"] = 0.80;

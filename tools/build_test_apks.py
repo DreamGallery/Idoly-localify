@@ -156,7 +156,7 @@ def verify_module_font_bundle(module: Path, font: Path) -> None:
 
 
 def audit_independent_font(font: Path) -> dict:
-    """Check complete RHR coverage for labels selected by the runtime CJK rule."""
+    """Check complete replacement-font coverage for labels selected by the runtime CJK rule."""
     from fontTools.ttLib import TTFont
     from font_coverage import audit_codepoints, translated_fields, source_fields
     from patch_font import embedded_font_bytes
@@ -327,7 +327,7 @@ def main() -> None:
     write_json(args.output_dir / "font-coverage.json", coverage)
     source_note = "译文及游戏原文" if coverage["source_fields_included"] else "译文"
     if args.font_patch_mode in ("add-font", "module-font"):
-        print(f"完整 RHR 字体已覆盖 {coverage['fields']:,} 个{source_note}输入中的全部可见字符；"
+        print(f"完整替换字体已覆盖 {coverage['fields']:,} 个{source_note}输入中的全部可见字符；"
               "实际字体选择遵循模块的 font_mode 与控件规则，显示效果待实机验证")
     else:
         print(f"字体已覆盖 {coverage['fields']:,} 个{source_note}输入中的全部可见字符")

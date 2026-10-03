@@ -127,7 +127,7 @@ final class FontProfileEditor {
             case "line_spacing_delta_unity": return "行距增量";
             case "anchored_y_delta_unity": return "竖向偏移增量";
             case "anchored_y_unity": return "竖向位置";
-            case "character_spacing_unity": return "字距";
+            case "character_spacing_unity": return "字间距";
             case "alignment": return "对齐";
             case "content_width_ratio": return "容器可用宽度比例";
             case "rect_size_unity": return "文字框尺寸";

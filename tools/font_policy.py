@@ -3,7 +3,12 @@
 DEFAULT_FONT_MODE = "replace-ui"
 INDEPENDENT_FONT_MODES = ("preserve-non-cjk", DEFAULT_FONT_MODE)
 DEFAULT_PATCH_MODE = "module-font"
+# Stable Unity asset ID retained for saved settings and older LSPatch packages.
+# The actual font family is selected by config/font-source.json.
 INDEPENDENT_FONT_NAME = "Localify-ResourceHanRoundedSC-ExtraBold"
+SUPPORTED_REPLACEMENT_FAMILIES = (
+    "Noto Sans CJK SC", "Resource Han Rounded SC", "Resource Han Rounded SC VF",
+)
 LEGACY_FONT_NAME = "FOT-UDKakugo_LargePro-DB"
 FONT_PATCH_MODES = ("replace-fot", "add-font", "module-font")
 FONT_MODES = ("fallback", "replace-translated", "replace-all") + INDEPENDENT_FONT_MODES

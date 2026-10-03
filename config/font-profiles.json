@@ -23,8 +23,10 @@
         ]
       },
       "adjust": {
-        "outline_width": 0.86,
-        "face_dilate": 0.45
+        "outline_width": 1,
+        "face_dilate": 0.9,
+        "character_spacing_unity": 8,
+        "font_size_unity": 50
       }
     },
     {
@@ -45,7 +47,7 @@
       },
       "adjust": {
         "outline_width": 0.5,
-        "face_dilate": 0.4,
+        "face_dilate": 0.5,
         "face_color_rgba": [
           0,
           0,

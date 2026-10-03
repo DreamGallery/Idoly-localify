@@ -27,7 +27,8 @@ COLORS = {'face_color_rgba', 'outline_color_rgba', 'vertex_color_rgba'}
 BOOLEANS = {'rebind_font_before_render', 'disable_auto_size', 'outline_outward'}
 PROFILE_SPECS = {
     'ordinary_story_subtitle': ('ordinary_story', ['Message Label'],
-                                {'outline_width', 'face_dilate'}),
+                                {'outline_width', 'face_dilate', 'font_size_unity',
+                                 'character_spacing_unity'}),
     'ordinary_story_name': ('ordinary_story', ['Name Label'],
                             {'outline_width', 'face_dilate', 'face_color_rgba',
                              'outline_color_rgba', 'vertex_color_rgba'}),

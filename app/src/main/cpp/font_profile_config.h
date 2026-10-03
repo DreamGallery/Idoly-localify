@@ -39,6 +39,16 @@ public:
             // settings. All original selectors, guards and adjustments remain
             // strictly validated below; missing required profiles still fail.
             if (candidate.contains("profiles") && candidate["profiles"].is_array()) {
+                // Older subtitle settings predate the two layout controls.
+                // Fill only these new fields; retain every saved adjustment.
+                for (auto& item : candidate["profiles"])
+                    if (item.is_object() && item.value("id", std::string()) == "ordinary_story_subtitle" &&
+                        item.contains("adjust") && item["adjust"].is_object())
+                        for (const auto& baseline : defaults["profiles"])
+                            if (baseline["id"] == "ordinary_story_subtitle")
+                                for (const char* field : {"font_size_unity", "character_spacing_unity"})
+                                    if (!item["adjust"].contains(field))
+                                        item["adjust"][field] = baseline["adjust"][field];
                 for (const std::string optional : {"daily_roulette_description",
                      "costume_selection_hide_ui", "costume_selection_reaction", "costume_selection_determine"}) {
                     bool found = false;

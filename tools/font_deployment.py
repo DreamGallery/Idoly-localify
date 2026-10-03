@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from zipfile import ZipFile
 
-from font_policy import INDEPENDENT_FONT_MODES, validate_font_pair
+from font_policy import INDEPENDENT_FONT_MODES, SUPPORTED_REPLACEMENT_FAMILIES, validate_font_pair
 from font_coverage import audit_codepoints, require_coverage, source_fields, translated_fields
 
 PACKAGE = "game.qualiarts.idolypride"
@@ -50,17 +50,18 @@ def inspect_payload(base: Path) -> dict:
     if len(legacy) != 1 or len(independent) > 1:
         raise ValueError("Installed APK has an unrecognized font layout")
 
-    def is_rhr(font) -> bool:
-        family = TTFont(BytesIO(bytes(font.m_FontData)))["name"].getDebugName(1) or ""
-        return "Resource Han Rounded" in family
+    def is_replacement(font) -> bool:
+        with TTFont(BytesIO(bytes(font.m_FontData))) as face:
+            families = {face['name'].getDebugName(i) for i in (1, 16)}
+        return bool(families.intersection(SUPPORTED_REPLACEMENT_FAMILIES))
 
     if independent:
-        if not is_rhr(independent[0]) or is_rhr(legacy[0]):
+        if not is_replacement(independent[0]) or is_replacement(legacy[0]):
             raise ValueError("Independent font APK does not preserve the original font")
         verify_independent_dependencies(environment, bytes(independent[0].m_FontData))
         patch_mode, selected = "add-font", independent[0]
     else:
-        patch_mode = "replace-fot" if is_rhr(legacy[0]) else "original"
+        patch_mode = "replace-fot" if is_replacement(legacy[0]) else "original"
         selected = legacy[0]
     data = bytes(selected.m_FontData)
     with TTFont(BytesIO(data)) as font:
@@ -85,10 +86,10 @@ def inspect_bundle(path: Path) -> dict:
     data = bytes(fonts[0].m_FontData)
     verify(raw, data)
     with TTFont(BytesIO(data)) as font:
-        family = font["name"].getDebugName(1) or ""
+        families = {font['name'].getDebugName(i) for i in (1, 16)}
         cmap = font.getBestCmap()
-    if "Resource Han Rounded" not in family or not cmap:
-        raise ValueError("Module bundle has no supported RHR Unicode font")
+    if not families.intersection(SUPPORTED_REPLACEMENT_FAMILIES) or not cmap:
+        raise ValueError("Module bundle has no supported replacement Unicode font")
     return {"patch_mode": "module-font", "font_sha256": hashlib.sha256(data).hexdigest(),
             "codepoints": sorted(cmap)}
 

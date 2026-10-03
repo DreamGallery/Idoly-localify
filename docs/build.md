@@ -20,12 +20,7 @@ python3 tools/build_test_apks.py --preflight-only \
   --split .analysis/apk/split_config.arm64_v8a.apk
 ```
 
-从 [Resource Han Rounded 发布页](https://github.com/CyanoHao/Resource-Han-Rounded/releases) 下载 1.910 的 CFF2 OTF 包，提取 `ResourceHanRoundedSC-VF.otf` 到 `.analysis/fonts/`。将 [LSPatch CLI](https://github.com/JingMatrix/LSPatch/releases) 的 JAR 保存为 `.analysis/tools/lspatch.jar`。
-
-```sh
-python3 tools/instantiate_rhr.py .analysis/fonts/ResourceHanRoundedSC-VF.otf \
-  .analysis/fonts/ResourceHanRoundedSC-ExtraBold.otf
-```
+从 [Noto 官方固定版本](https://github.com/notofonts/noto-cjk/blob/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf) 下载 `NotoSansCJKsc-Bold.otf`，保存到 `.analysis/fonts/`。默认版本、字重和 SHA-256 记录在 `config/font-source.json`；使用原始完整字体，不单独改写标点轮廓。许可证随模块放在 `assets/licenses/NotoSansCJK-OFL.txt`。将 [LSPatch CLI](https://github.com/JingMatrix/LSPatch/releases) 的 JAR 保存为 `.analysis/tools/lspatch.jar`。
 
 ## 准备模块字体
 
@@ -34,12 +29,22 @@ python3 tools/instantiate_rhr.py .analysis/fonts/ResourceHanRoundedSC-VF.otf \
 ```sh
 python3 tools/build_font_bundle.py \
   .analysis/apk/base.apk \
-  .analysis/fonts/ResourceHanRoundedSC-ExtraBold.otf \
+  .analysis/fonts/NotoSansCJKsc-Bold.otf \
   .analysis/font-bundle-template \
   .analysis/font-bundle/resource-han-rounded.bundle
 mkdir -p app/src/main/assets/idoly-localify
 cp .analysis/font-bundle/resource-han-rounded.bundle app/src/main/assets/idoly-localify/
 ```
+
+已有独立模块字体 bundle 时，无需再次提供游戏 APK，可直接更新其中的字体：
+
+```sh
+python3 tools/prepare_module_font.py \
+  .analysis/font-bundle/resource-han-rounded.bundle \
+  app/src/main/assets/idoly-localify/resource-han-rounded.bundle
+```
+
+此命令按 `config/font-source.json` 下载、缓存并校验官方字体；离线可加 `--font .analysis/fonts/NotoSansCJKsc-Bold.otf`。正式发布脚本同样将运行器旧 bundle 作为只读结构模板，重新装入当前默认字体，避免沿用旧字库。`resource-han-rounded.bundle` 及 Unity 对象名沿用旧标识，仅用于兼容已有安装与配置。
 
 将 `.analysis/font-bundle-template` 替换为实际模板文件。工具检查字体字节、对象及引用完整性，输出旁附校验报告。生成的 bundle 已加入 Git 忽略；构建前须自行准备，Gradle 不联网获取字体。LSPosed 用户完成模块构建安装后，启用作用域并启动一次游戏即可安装字体。
 
@@ -54,7 +59,7 @@ python3 tools/pipeline.py verify
 python3 tools/build_test_apks.py \
   --base .analysis/apk/base.apk \
   --split .analysis/apk/split_config.arm64_v8a.apk \
-  --font .analysis/fonts/ResourceHanRoundedSC-ExtraBold.otf \
+  --font .analysis/fonts/NotoSansCJKsc-Bold.otf \
   --font-patch-mode module-font \
   --lspatch .analysis/tools/lspatch.jar \
   --font-cache .analysis/font-cache \
@@ -65,7 +70,7 @@ python3 tools/build_test_apks.py \
 
 默认 `module-font` 模式只嵌入模块；字体来自模块 AssetBundle，游戏内字体与图片不做替换。旧 `add-font` 流程仍可显式选择。
 
-打包脚本会检查 APK 包名、版本、原版签名和字体覆盖率，检查模块内置词典的字体模式与实际载荷是否配对，再按所选模式处理字体、嵌入模块、签名，并核对输出。兼容模式 `add-font` 保留游戏全部原字体资源，须搭配正式 pipeline 生成的 `replace-ui` 词典：界面文字默认使用 RHR，纯数量与等级数字（包含千分位逗号）、商品售价整组（含币种符号与单位）、指定装饰标题及 Rank 下方等级保留原字体，Rank 标题及好友列表昵称与等级整行仍用 RHR，具体规则由 `ui_font_policy.h` 管理。旧 `preserve-non-cjk` 同样使用 `add-font`，仍保留其按字符分类的兼容行为。旧方案可显式构建 `--font-patch-mode replace-fot`，但模块内置词典也须使用旧模式。默认使用 Android 调试密钥；正式签名可通过 `--keystore` 和 `IDOLY_KEYSTORE_PASSWORD` 指定。测试包包含游戏文件，仅供本地使用。
+打包脚本会检查 APK 包名、版本、原版签名和字体覆盖率，检查模块内置词典的字体模式与实际载荷是否配对，再按所选模式处理字体、嵌入模块、签名，并核对输出。兼容模式 `add-font` 保留游戏全部原字体资源，须搭配正式 pipeline 生成的 `replace-ui` 词典：界面文字默认使用 Noto Sans CJK SC Bold，纯数量与等级数字（包含千分位逗号）、商品售价整组（含币种符号与单位）、指定装饰标题及 Rank 下方等级保留原字体，Rank 标题及好友列表昵称与等级整行仍用 Noto Sans CJK SC Bold，具体规则由 `ui_font_policy.h` 管理。旧 `preserve-non-cjk` 同样使用 `add-font`，仍保留其按字符分类的兼容行为。旧方案可显式构建 `--font-patch-mode replace-fot`，但模块内置词典也须使用旧模式。默认使用 Android 调试密钥；正式签名可通过 `--keystore` 和 `IDOLY_KEYSTORE_PASSWORD` 指定。测试包包含游戏文件，仅供本地使用。
 
 兼容字体修补模式下，可选的 `--font-cache` 缓存字体替换后的 APK。缓存按字体 patch 模式、原版 base、字体、构建脚本及依赖版本的 SHA/版本绑定；修改插件代码后再次打包可跳过 Unity 字体重写。每次仍检查原版拆分 APK 的版本和签名、当前字符覆盖、缓存字体字节，并重新嵌入和签名最新模块、检查最终产物。缺少缓存时自动生成，输入或工具变化时生成新缓存；缓存损坏则停止并提示删除对应条目。缓存含游戏资源，放在 Git 忽略的本地区域，不上传仓库。
 
