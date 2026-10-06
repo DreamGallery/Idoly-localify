@@ -82,6 +82,12 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, '', 'HTTP 403')):
             with self.assertRaisesRegex(RuntimeError, 'GitHub access'):
                 release.release_exists('owner/repo', 'text-a')
+    def test_unpublished_draft_is_found_after_tag_endpoint_returns_404(self):
+        draft = {'id': 42, 'tag_name': 'text-a', 'draft': True}
+        replies = [subprocess.CompletedProcess([], 1, '', 'gh: Not Found (HTTP 404)'),
+                   subprocess.CompletedProcess([], 0, json.dumps([draft]), '')]
+        with patch.object(release.subprocess, 'run', side_effect=replies):
+            self.assertEqual(release.release_exists('owner/repo', 'text-a'), draft)
     def test_draft_resumes_only_missing_assets(self):
         manifest = self.root / 'manifest.json'; manifest.write_text('{}')
         def command(args):

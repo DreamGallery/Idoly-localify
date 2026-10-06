@@ -21,6 +21,7 @@ class FakeReleases:
         self.operations = []
         self.uploaded = []
         self.latest = tag
+        self.hide_drafts_from_tag_endpoint = False
 
     @staticmethod
     def asset(path):
@@ -34,7 +35,10 @@ class FakeReleases:
         self.operations.append((method, path, copy.deepcopy(data)))
         if method == 'GET':
             if path.startswith('releases/tags/'):
-                return copy.deepcopy(self.items.get(path.removeprefix('releases/tags/')))
+                item = self.items.get(path.removeprefix('releases/tags/'))
+                if item and item.get('draft') and self.hide_drafts_from_tag_endpoint:
+                    return None
+                return copy.deepcopy(item)
             if path == 'releases/latest':
                 return copy.deepcopy(self.items[self.latest])
             if path.startswith('releases/'):
@@ -131,6 +135,17 @@ class LatestReleaseTests(unittest.TestCase):
         self.publish()
         self.assertTrue(latest.verified_assets(self.client.items['latest'],
                                                [self.output / n for n in latest.TEXT_ASSETS]))
+
+    def test_first_publication_resumes_draft_without_a_published_tag(self):
+        self.client.hide_drafts_from_tag_endpoint = True
+        with patch.object(self.client, 'upload', side_effect=RuntimeError('network failure')):
+            with self.assertRaisesRegex(RuntimeError, 'network'):
+                self.publish()
+        self.assertTrue(self.client.items['latest']['draft'])
+        self.publish()
+        self.assertFalse(self.client.items['latest']['draft'])
+        self.assertEqual(sum(method == 'POST' and path == 'releases'
+                             for method, path, _ in self.client.operations), 1)
 
     def test_corrupt_uploaded_zip_never_changes_manifest_or_publishes_draft(self):
         original = self.client.upload

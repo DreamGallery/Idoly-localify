@@ -24,14 +24,11 @@ def run(command, cwd=None, capture=False):
                           text=True, capture_output=capture).stdout
 
 def release_exists(repo, tag):
-    result = subprocess.run(['gh', 'api', f'repos/{repo}/releases/tags/{tag}'],
-                            text=True, capture_output=True)
-    if result.returncode == 0:
-        release = json.loads(result.stdout)
-        return release
-    if 'HTTP 404' not in result.stderr:
-        raise RuntimeError('Cannot inspect releases; check GitHub access before retrying')
-    return None
+    from release_followup import GitHub, find_release
+    try:
+        return find_release(GitHub(repo), tag)
+    except RuntimeError:
+        raise RuntimeError('Cannot inspect releases; check GitHub access before retrying') from None
 
 TEXT_RELEASE_NOTES = '自动校验的本地化资源。文本更新后请重启游戏以载入 MasterDB 更新。\n'
 

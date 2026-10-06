@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, is_text, timestamp
+from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, find_release, is_text, timestamp
 
 
 def sha256(path):
@@ -73,7 +73,7 @@ def publish_latest(repository, output, text_tag, dry_run=False, *, client=None, 
     source = client.request('GET', f'releases/tags/{text_tag}')
     if not is_text(source) or not verified_assets(source, [archive, manifest_path]):
         raise ValueError('Historical text release is not complete and verified; latest unchanged')
-    alias = client.request('GET', 'releases/tags/latest', missing_ok=True)
+    alias = find_release(client, 'latest')
     if alias:
         if alias.get('immutable'):
             raise ValueError('The latest release is immutable; disable release immutability before using a moving alias')

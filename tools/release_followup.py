@@ -67,6 +67,17 @@ class GitHub:
         return json.loads(data)
 
 
+def find_release(client, tag):
+    release = client.request('GET', 'releases/tags/' + quote(tag, safe=''), missing_ok=True)
+    if release is not None:
+        return release
+    # Drafts can be listed by an authorized publisher before a tag exists.
+    matches = [item for item in client.releases() if item.get('tag_name') == tag]
+    if len(matches) > 1:
+        raise ValueError('Multiple releases use the selected tag')
+    return matches[0] if matches else None
+
+
 def dispatch(source, target, tag):
     if not PLUGIN_TAG.fullmatch(tag):
         raise ValueError('Expected a plugin release tag')
