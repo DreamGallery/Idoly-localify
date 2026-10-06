@@ -8,7 +8,7 @@
 - **LSPatch**：将模块嵌入游戏安装包。字体由模块在运行时加载，无需修改游戏字体资源。
 - 默认字体为 Noto Sans CJK SC SemiBold，指定数字、价格等控件保留原字体。图片汉化为可选功能。
 
-当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建需要 Android SDK、NDK、JDK 17、Python 3.12+，具体依赖和命令见[构建说明](docs/build.md)。
+当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建插件需要 Android SDK、NDK、JDK 17+、Python 3.12+；使用 LSPatch 修补游戏需要 JDK 21+。具体依赖和命令见[构建说明](docs/build.md)。
 
 ## 项目结构
 
