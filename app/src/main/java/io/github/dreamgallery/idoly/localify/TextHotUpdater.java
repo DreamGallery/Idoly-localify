@@ -36,6 +36,7 @@ final class TextHotUpdater {
     private static final String TRANSACTION_DIR = ".text-update-transaction";
     private static final String TEXT_VERSION_FILE = "installed-text-version.txt";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    private static volatile boolean dictionaryRestartPending;
 
     interface Callback { void done(Result result); }
     static final class Result {
@@ -97,9 +98,12 @@ final class TextHotUpdater {
             try { noticeScripts = NoticeWebViewHook.prepare(notices); }
             catch (Exception error) { return new Result(false, "公告词典无效：" + error.getMessage()); }
         }
-        if (!HookEntry.reloadDictionary(dictionary)) {
-            return new Result(false, "字典校验或载入失败，当前翻译保持不变");
-        }
+        int status = HookEntry.updateDictionary(dictionary, dictionaryRestartPending);
+        if (!DictionaryUpdateStatus.accepted(status))
+            return new Result(false, DictionaryUpdateStatus.failureMessage(status));
+        dictionaryRestartPending = status == DictionaryUpdateStatus.RESTART_REQUIRED;
+        if (dictionaryRestartPending)
+            return new Result(true, "本地字典校验通过，配置变化需要重启游戏后生效");
         if (noticeScripts != null) NoticeWebViewHook.apply(noticeScripts);
         return new Result(true, "界面字典已重新载入；已打开的游戏页面可能需要重新进入。剧情资源在下一次加载时生效。" );
     }
@@ -192,7 +196,8 @@ final class TextHotUpdater {
             if (!target.isFile() || !sha256(target).equals(item.sha256)) changed.add(item);
         }
         if (changed.isEmpty() && version.equals(readTextVersion(dataDir)))
-            return new Result(true, "文本已是清单版本 " + version, manifestUrl, version);
+            return new Result(true, "文本已是清单版本 " + version
+                + (dictionaryRestartPending ? "，请重启游戏使配置变化生效" : ""), manifestUrl, version);
         Path stage = Files.createTempDirectory(dataDir.toPath(), ".text-update-");
         Map<String, String> noticeScripts = null;
         try {
@@ -249,9 +254,16 @@ final class TextHotUpdater {
             }
             changed.add(versionItem);
             prepareTransaction(dataDir, changed);
-            if (dictionaryChanged && !HookEntry.reloadDictionary(stagedDictionary)) {
+            // A pending restart means the on-disk backup differs from live state.
+            // Keep later updates deferred too, so rollback never tries to restore
+            // that pending configuration into this still-running process.
+            int dictionaryStatus = dictionaryChanged ? HookEntry.updateDictionary(
+                    stagedDictionary, dictionaryRestartPending)
+                : (dictionaryRestartPending ? DictionaryUpdateStatus.RESTART_REQUIRED
+                                            : DictionaryUpdateStatus.APPLIED);
+            if (!DictionaryUpdateStatus.accepted(dictionaryStatus)) {
                 recover(dataDir);
-                return new Result(false, "下载字典未通过原生校验，旧版本保持不变");
+                return new Result(false, DictionaryUpdateStatus.failureMessage(dictionaryStatus));
             }
             try {
                 for (Item item : changed) {
@@ -263,11 +275,15 @@ final class TextHotUpdater {
                     atomicMove(item.staged.toPath(), target.toPath());
                 }
                 writeJournal(dataDir, "committed", changed);
+                dictionaryRestartPending = dictionaryStatus == DictionaryUpdateStatus.RESTART_REQUIRED;
                 if (noticeScripts != null) NoticeWebViewHook.apply(noticeScripts);
                 try { clearTransaction(dataDir); }
                 catch (Exception cleanupError) {
                     Log.w(TAG, "Committed text update; stale backup cleanup deferred", cleanupError);
                 }
+                if (dictionaryRestartPending)
+                    return new Result(true, "已下载并校验文本 " + version
+                        + "。字典配置发生变化，请完全关闭并重启游戏使更新生效。", manifestUrl, version);
                 return new Result(true, "已更新到 " + version + "。界面字典即时生效；剧情资源下次加载生效。"
                     + (masterChanged ? "MasterDB 已更新，请重启游戏使其生效。" : ""), manifestUrl, version);
             } catch (Exception error) {
@@ -275,7 +291,8 @@ final class TextHotUpdater {
                 catch (Exception rollbackError) {
                     error.addSuppressed(rollbackError);
                 }
-                if (dictionaryChanged && !HookEntry.reloadDictionary(currentDictionary)) {
+                if (dictionaryChanged && dictionaryStatus == DictionaryUpdateStatus.APPLIED
+                        && !HookEntry.reloadDictionary(currentDictionary)) {
                     Log.e(TAG, "Cannot restore running dictionary after update failure");
                 }
                 throw error;

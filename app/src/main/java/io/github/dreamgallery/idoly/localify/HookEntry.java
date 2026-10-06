@@ -34,6 +34,7 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
 
     private static native boolean nativeInstall(String il2cppPath, String dictionaryPath, String dumpPath);
     private static native boolean nativeReloadDictionary(String dictionaryPath);
+    private static native int nativeUpdateDictionary(String dictionaryPath, boolean deferApply);
     private static native boolean nativeValidateMasterBlobs(String path);
     private static native boolean nativeSetTextCapture(boolean enabled);
     private static native String nativeGetTextCapturePath();
@@ -44,6 +45,11 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
 
     static boolean reloadDictionary(File dictionary) {
         return NATIVE_READY.get() && nativeReloadDictionary(dictionary.getAbsolutePath());
+    }
+
+    static int updateDictionary(File dictionary, boolean deferApply) {
+        return NATIVE_READY.get() ? nativeUpdateDictionary(dictionary.getAbsolutePath(), deferApply)
+            : DictionaryUpdateStatus.NOT_READY;
     }
 
     static boolean validateMasterBlobs(File file) {

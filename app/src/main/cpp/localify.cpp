@@ -3726,7 +3726,9 @@ std::string javaString(JNIEnv* env, jstring value) {
     return result;
 }
 
-bool loadDictionary(const std::string& path, bool reload = false) {
+bool loadDictionary(const std::string& path, bool reload = false,
+                    bool* restartRequired = nullptr, bool deferApply = false) {
+    if (restartRequired) *restartRequired = false;
     std::ifstream input(path);
     if (!input) { LOGE("Dictionary missing: %s", path.c_str()); return false; }
     try {
@@ -3834,11 +3836,20 @@ bool loadDictionary(const std::string& path, bool reload = false) {
         for (const auto& translated : nextTranslatedValues)
             nextUserTemplates.add(translated);
         std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
-        if (reload && (nextDumpEnabled != dumpEnabled ||
+        if (reload && (deferApply || nextDumpEnabled != dumpEnabled ||
                 nextResourceReplace != resourceReplace || nextAssetReplace != assetReplace ||
                 nextCaptureOcto != captureOcto || nextProbeMaster != probeMaster ||
-                nextFontEnabled != fontEnabled || nextFontMode != fontMode))
+                nextFontEnabled != fontEnabled || nextFontMode != fontMode)) {
+            // The entire dictionary is valid, but startup-only hooks cannot be
+            // changed in this process. Let the updater commit it for next boot
+            // without swapping any live dictionaries or runtime configuration.
+            if (restartRequired) {
+                *restartRequired = true;
+                LOGI("Validated dictionary requires a game restart; live state retained");
+                return true;
+            }
             throw std::runtime_error("runtime configuration changes require restarting the game");
+        }
         for (const auto& source : masterBlobPatches.suppressedSources())
             nextText.erase(source);
         textDict.swap(nextText);
@@ -3889,6 +3900,18 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeReloadDictionary(
     JNIEnv* env, jclass, jstring dictionaryPath) {
     if (!hooksInstalled.load() || !dictionaryPath) return JNI_FALSE;
     return loadDictionary(javaString(env, dictionaryPath), true) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeUpdateDictionary(
+    JNIEnv* env, jclass, jstring dictionaryPath, jboolean deferApply) {
+    // Matches DictionaryUpdateStatus. No live mutation on INVALID/RESTART_REQUIRED.
+    if (!hooksInstalled.load()) return -1;
+    if (!dictionaryPath) return 0;
+    bool restartRequired = false;
+    if (!loadDictionary(javaString(env, dictionaryPath), true, &restartRequired,
+                        deferApply == JNI_TRUE)) return 0;
+    return restartRequired ? 2 : 1;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
