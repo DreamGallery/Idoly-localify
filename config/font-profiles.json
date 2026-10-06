@@ -23,10 +23,10 @@
         ]
       },
       "adjust": {
-        "outline_width": 1,
-        "face_dilate": 0.9,
-        "character_spacing_unity": 8,
-        "font_size_unity": 50
+        "outline_width": 0.35,
+        "face_dilate": 0.35,
+        "character_spacing_unity": 16,
+        "font_size_unity": 54
       }
     },
     {
@@ -88,8 +88,7 @@
       "adjust": {
         "font_size_ratio": 1.0,
         "font_size_base_unity": 40,
-        "alignment": "midline-center",
-        "auto_size_when_characters_gt": 2
+        "alignment": "midline-center"
       }
     },
     {

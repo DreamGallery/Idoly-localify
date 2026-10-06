@@ -132,8 +132,9 @@ def verify_embedded(base: Path, module: Path, font: Path, mode: str = "replace-f
         if patched.read(module_name) != module.read_bytes():
             raise ValueError("LSPatch embedded module differs from the built module APK")
         origin = patched.read("assets/lspatch/origin.apk")
-    if mode == "module-font":
+    if mode in ("module-font", "add-font"):
         verify_module_font_bundle(module, font)
+    if mode == "module-font":
         if original_apk is None:
             raise ValueError("module-font verification requires original APK")
         from patch_font import split_names
@@ -165,7 +166,7 @@ def audit_independent_font(font: Path) -> dict:
         yield from translated_fields(ROOT)
         yield from source_fields(ROOT)
     report = audit_codepoints(set(cmap), fields())
-    report.update(source_fields_included=True, coverage_scope="complete-rhr-font",
+    report.update(source_fields_included=True, coverage_scope="complete-replacement-font",
                   routing_policy="module-dictionary-font-mode-and-ui_font_policy",
                   original_fonts="preserved; runtime-validation-pending")
     return report
@@ -311,7 +312,7 @@ def main() -> None:
         return
     try:
         verify_module_font_policy(args.module, args.font_patch_mode)
-        if args.font_patch_mode == "module-font":
+        if args.font_patch_mode in ("module-font", "add-font"):
             verify_module_font_bundle(args.module, args.font)
     except ValueError as error:
         parser.error(str(error))

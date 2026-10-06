@@ -46,6 +46,12 @@ class FontRuntimeTests(unittest.TestCase):
     def test_renderer_submission_and_original_font_restore(self):
         self.run_fixture("test_tmp_renderer_submit")
 
+    def test_activity_layout_scope_and_submesh_alignment(self):
+        self.run_fixture("test_activity_result_layout")
+
+    def test_story_outline_scope_and_original_distance_range(self):
+        self.run_fixture("test_story_outline_font")
+
 
 if __name__ == "__main__":
     unittest.main()

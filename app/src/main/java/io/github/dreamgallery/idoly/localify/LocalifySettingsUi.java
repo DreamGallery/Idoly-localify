@@ -59,7 +59,7 @@ final class LocalifySettingsUi {
         checkStartup.setOnCheckedChangeListener((button, enabled) -> UpdateChecker.setEnabled(activity, enabled));
         updates.addView(checkStartup);
         LinearLayout fonts = SettingsUiStyle.card(page.body, "字体与排版", "按场景调整字号、描边和行距，预览后再保存。");
-        SettingsUiStyle.row(fonts, "调整游戏字体", null, () -> { font.run(); dialog.dismiss(); });
+        SettingsUiStyle.row(fonts, "调整字号与排版", null, () -> { font.run(); dialog.dismiss(); });
         // Keep the visible settings page behind modal story tools; closing them returns here.
         LinearLayout stories = SettingsUiStyle.card(page.body, "剧情播放", "选择实际剧情与同类入口，可分别恢复。");
         SettingsUiStyle.row(stories, "卡片剧情替换", null, story);
@@ -67,7 +67,7 @@ final class LocalifySettingsUi {
         SettingsUiStyle.row(stories, "实验性 · 特殊活动剧情替换", null, specialStory);
         LinearLayout capture = SettingsUiStyle.card(page.body,
             capturing ? "文本采集 · 进行中" : "文本采集 · 未开启",
-            "在悬浮窗开始采集，浏览待检查的页面，再停止并导出。记录仅保存在本机。");
+            "在悬浮窗开始采集，浏览待检查的页面，再停止采集。文件会自动导出到系统下载目录，仅保存在本机。");
         TextView location = SettingsUiStyle.text(dialog.getContext(),
             "下载 / Idoly-localify\n文本、布局与完整性记录", 14, SettingsUiStyle.ACCENT, false);
         location.setLineSpacing(SettingsUiStyle.dp(dialog.getContext(), 4), 1);

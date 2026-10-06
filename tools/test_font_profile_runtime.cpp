@@ -11,6 +11,19 @@ int main() {
     assert(profile.assign(changed.dump()));
     assert(profile.value("ordinary_story_subtitle", "outline_width") == 0.6f);
     const std::string good = profile.dump();
+    auto oldPortrait = nlohmann::json::parse(good);
+    for (auto& item : oldPortrait["profiles"])
+        if (item["id"] == "portrait_love_event_name")
+            item["adjust"]["auto_size_when_characters_gt"] = 2;
+    assert(profile.assign(oldPortrait.dump()));
+    assert(profile.dump() == good); // Retired fitting must not reset other saved settings.
+    for (const auto& invalid : nlohmann::json::array({true, -1, 21, 2.5, "2"})) {
+        for (auto& item : oldPortrait["profiles"])
+            if (item["id"] == "portrait_love_event_name")
+                item["adjust"]["auto_size_when_characters_gt"] = invalid;
+        assert(!profile.assign(oldPortrait.dump()));
+        assert(profile.dump() == good);
+    }
     auto oldSubtitle = nlohmann::json::parse(good);
     oldSubtitle["profiles"][0]["adjust"].erase("font_size_unity");
     oldSubtitle["profiles"][0]["adjust"].erase("character_spacing_unity");
@@ -110,10 +123,10 @@ int main() {
     assert(!profile.assign("not json"));
     assert(profile.dump() == good);
     assert(profile.assign(kFontProfileDefaults));
-    assert(profile.value("ordinary_story_subtitle", "outline_width") == 1.0f);
-    assert(profile.value("ordinary_story_subtitle", "face_dilate") == 0.9f);
-    assert(profile.value("ordinary_story_subtitle", "font_size_unity") == 50.0f);
-    assert(profile.value("ordinary_story_subtitle", "character_spacing_unity") == 8.0f);
+    assert(profile.value("ordinary_story_subtitle", "outline_width") == 0.35f);
+    assert(profile.value("ordinary_story_subtitle", "face_dilate") == 0.35f);
+    assert(profile.value("ordinary_story_subtitle", "font_size_unity") == 54.0f);
+    assert(profile.value("ordinary_story_subtitle", "character_spacing_unity") == 16.0f);
     assert(profile.value("ordinary_story_name", "outline_width") == 0.5f);
     assert(profile.value("ordinary_story_name", "face_dilate") == 0.5f);
     auto controls = nlohmann::json::parse(profile.dump());

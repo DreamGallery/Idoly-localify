@@ -197,14 +197,9 @@ def assert_compatible(adb_call, adb_bin: str, serial: str, root: Path,
         record = {"schema_version": CACHE_SCHEMA, "apk_sha256": digest, **payload}
         validate_record(record, digest, record_path)
         record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    module_present = False
-    if mode in INDEPENDENT_FONT_MODES and payload["patch_mode"] != "original":
-        present = adb_call(adb_bin, serial, "shell",
-            f"if [ -f {shlex.quote(BUNDLE_PATH)} ]; then echo present; else echo absent; fi").strip()
-        if present not in ("present", "absent"):
-            raise ValueError("Cannot determine installed module font presence")
-        module_present = present == "present"
-    if payload["patch_mode"] == "original" or module_present:
+    # Current independent routing only loads the module bundle, including on
+    # older games that still contain an embedded replacement font.
+    if mode in INDEPENDENT_FONT_MODES or payload["patch_mode"] == "original":
         payload = installed_bundle_payload(adb_call, adb_bin, serial, cache, digest)
         if installed_digest(adb_call, adb_bin, serial) != (remote_path, digest):
             raise ValueError("Installed APK changed during font inspection; retry")

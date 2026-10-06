@@ -1,13 +1,22 @@
 """Shared runtime-font / APK-payload contract for build and deployment."""
 
+import json
+from pathlib import Path
+
 DEFAULT_FONT_MODE = "replace-ui"
 INDEPENDENT_FONT_MODES = ("preserve-non-cjk", DEFAULT_FONT_MODE)
 DEFAULT_PATCH_MODE = "module-font"
 # Stable Unity asset ID retained for saved settings and older LSPatch packages.
 # The actual font family is selected by config/font-source.json.
 INDEPENDENT_FONT_NAME = "Localify-ResourceHanRoundedSC-ExtraBold"
+# Exact family names from the controlled source specification, plus historical
+# payloads that deployment inspection still needs to recognize.
+_FONT_SOURCE = json.loads((Path(__file__).resolve().parents[1] /
+                           'config/font-source.json').read_text(encoding='utf-8'))
 SUPPORTED_REPLACEMENT_FAMILIES = (
     "Noto Sans CJK SC", "Resource Han Rounded SC", "Resource Han Rounded SC VF",
+    _FONT_SOURCE['family'],
+    _FONT_SOURCE.get('instance', {}).get('family', _FONT_SOURCE['family']),
 )
 LEGACY_FONT_NAME = "FOT-UDKakugo_LargePro-DB"
 FONT_PATCH_MODES = ("replace-fot", "add-font", "module-font")

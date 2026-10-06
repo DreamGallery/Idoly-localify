@@ -6,7 +6,7 @@
 
 - **LSPosed／Vector**：在兼容的 root 设备启用模块，作用域仅选择游戏；使用原版游戏 APK。
 - **LSPatch**：将模块嵌入游戏安装包。字体由模块在运行时加载，无需修改游戏字体资源。
-- 默认字体为 Noto Sans CJK SC Bold，指定数字、价格等控件保留原字体。图片汉化为可选功能。
+- 默认字体为 Noto Sans CJK SC SemiBold，指定数字、价格等控件保留原字体。图片汉化为可选功能。
 
 当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建需要 Android SDK、NDK、JDK 17、Python 3.12+，具体依赖和命令见[构建说明](docs/build.md)。
 

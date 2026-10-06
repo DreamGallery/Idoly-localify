@@ -30,11 +30,16 @@
 #include "numeric_text_template_matcher.h"
 #include "venus_achiever_name_matcher.h"
 #include "home_activity_name_matcher.h"
+#include "fan_event_ranking_matcher.h"
+#include "premium_gacha_labels.h"
+#include "gacha_pickup_layout.h"
+#include "guild_medal_font.h"
 #include "shop_exchange_description_matcher.h"
 #include "story_bridge.h"
 #include "font_profile_config.h"
 #include "font_label_geometry.h"
 #include "font_outline_geometry.h"
+#include "story_outline_font.h"
 #include "mixed_font_router.h"
 #include "love_episode_label.h"
 #include "panorama_font_labels.h"
@@ -178,20 +183,19 @@ enum class FontMode { Fallback, ReplaceTranslated, ReplaceAll, PreserveNonCjk, R
 FontMode fontMode = FontMode::Fallback;
 uint32_t fallbackFontAssetHandle = 0;
 uint32_t loadedFontHandle = 0;
-uint32_t loadedCjkOnlyFontHandle = 0;
+uint32_t loadedReplacementFontHandle = 0;
 std::string standaloneFontBundlePath;
-struct LabelRhrFont { uint32_t rhrHandle; uint32_t originalHandle; };
-std::unordered_map<void*, LabelRhrFont> labelRhrAssets;
-std::unordered_map<void*, LabelRhrFont> pickerRhrAssets;
-struct ForumTitleFont { uint32_t weakHandle, fontHandle; uint64_t signature; size_t length; int diagnosticPasses; std::vector<uint32_t> retiredHandles; };
-std::unordered_map<void*, ForumTitleFont> forumTitleFonts;
+struct ReplacementFontPair { uint32_t replacementHandle; uint32_t originalHandle; };
+std::unordered_map<void*, ReplacementFontPair> labelReplacementAssets;
+std::unordered_map<void*, ReplacementFontPair> pickerReplacementAssets;
+std::unordered_map<void*, ReplacementFontPair> storyReplacementAssets;
+struct ConstrainedTitleFont { uint32_t weakHandle, fontHandle; uint64_t signature; size_t length; std::vector<uint32_t> retiredHandles; };
+std::unordered_map<void*, ConstrainedTitleFont> constrainedTitleFonts;
 std::unordered_map<void*, void*> labelOriginalFonts;
 struct OriginalLabelStyle { uint32_t weakHandle; uint32_t materialHandle; bool pendingRestoreMaterial = false; };
 std::unordered_map<int32_t, OriginalLabelStyle> originalLabelStyles;
 struct OriginalLegacyFont { uint32_t weakHandle; uint32_t fontHandle; };
 std::unordered_map<void*, OriginalLegacyFont> originalLegacyFonts;
-uint32_t pickerDiagnosticWeak = 0;
-int pickerDiagnosticPasses = 0;
 bool usesIndependentFontRouting() {
     return fontMode == FontMode::PreserveNonCjk || fontMode == FontMode::ReplaceUi;
 }
@@ -233,7 +237,9 @@ struct FontBaseline {
     uint64_t fittedGeneration = 0;
     bool pendingRendererSubmit = false;
     bool glyphFontRouteKnown = false;
-    bool glyphNumericCount = false;
+    bool glyphNumericSymbols = false;
+    void* storyOutlineMaterial = nullptr;
+    uint64_t storyOutlineGeneration = 0;
 };
 std::unordered_map<void*, FontBaseline> fontBaselines;
 FontBaseline* fontBaseline(void* object) {
@@ -291,11 +297,13 @@ using AssetLoadFn = void (*)(void*, Il2CppString*, void*, void*, void*);
 using GetBlobFn = void (*)(void*, int32_t, void**, int32_t*, void*);
 using CanvasWillRenderFn = void (*)(void*);
 using SetArraySizesFn = int32_t (*)(void*, void*, void*);
+using FitLayoutFn = void (*)(void*, int32_t, void*);
 
 InitFn origInit = nullptr;
 TextFn origTmpSetText = nullptr;
 EnableFn origTmpOnEnable = nullptr;
 EnableFn origTmpPreRender = nullptr;
+FitLayoutFn origFitToChildLayout = nullptr;
 SetArraySizesFn origTmpUiSetArraySizes = nullptr;
 SetArraySizesFn origTmp3dSetArraySizes = nullptr;
 TextFn origTmpSetTextOne = nullptr;
@@ -312,17 +320,19 @@ std::atomic<uint32_t> seenMasterBlobs{0};
 std::atomic<uint32_t> matchedMasterBlobs{0};
 
 void updateFont(void* textObject, bool preserveOriginalFont = false, const bool* replacementOverride = nullptr, bool pickerMetrics = false,
-                const mixed_font_router::UnicodeChar* forumBuffer = nullptr, size_t forumCapacity = 0, bool keepMetricVariant = false);
+                const mixed_font_router::UnicodeChar* titleBuffer = nullptr, size_t titleCapacity = 0, bool keepMetricVariant = false);
 void updateLegacyFont(void* textObject, Il2CppString* rendered);
-void routeTmpFontAfterSetter(void* textObject, Il2CppString* rendered);
-void diagnosePickerGeometry();
-void diagnoseForumTitleGeometry();
-void diagnoseHomeTalkGlyph(void* self, const char* stage);
+void routeTmpFontAfterSetter(void* textObject);
+void collectConstrainedTitleFonts();
 void synchronizeTmpRendererMaterial(void* self);
 void restoreStoryNameColor(void* textObject);
 void applyStorySubtitleLayout(void* textObject);
+void applyPortraitNameLayout(void* textObject);
 void refreshProfileMaterials();
 void* findClass(const char* imageName, const char* nameSpace, const char* className);
+void* readFontProperty(void* object, const char* assembly, const char* ns, const char* type, const char* name);
+bool unityObjectAlive(void* object);
+FontVerticalMetrics verticalMetrics(void* font);
 // Registered only from the TextMeshProUGUI lifecycle hooks. All access is on
 // Unity's rendering thread; weak handles never retain retired scene labels.
 std::unordered_map<void*, uint32_t> registeredTmpUi;
@@ -455,6 +465,34 @@ void captureTextLayout(void* self) {
         {"font_size", *static_cast<float*>(objectUnbox(size))},
         {"alignment", *static_cast<int*>(objectUnbox(alignment))},
         {"rect", {r[0], r[1], r[2], r[3]}}, {"anchored_position", {xy[0], xy[1]}}};
+    // Capture final layout metrics with the user's diagnostic session. These
+    // explain font-driven clipping and auto-sizing without a UI hierarchy scan.
+    const auto property = [&](const char* name) {
+        return readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", name);
+    };
+    if (void* value = property("get_enableAutoSizing")) item["auto_size"] = *static_cast<bool*>(objectUnbox(value));
+    if (void* value = property("get_fontSizeMin")) item["font_size_min"] = *static_cast<float*>(objectUnbox(value));
+    if (void* value = property("get_fontSizeMax")) item["font_size_max"] = *static_cast<float*>(objectUnbox(value));
+    if (void* value = property("get_overflowMode")) item["overflow_mode"] = *static_cast<int32_t*>(objectUnbox(value));
+    if (void* value = property("get_characterSpacing")) item["character_spacing"] = *static_cast<float*>(objectUnbox(value));
+    if (void* value = property("get_wordSpacing")) item["word_spacing"] = *static_cast<float*>(objectUnbox(value));
+    if (void* value = property("GetParsedText")) item["rendered_text"] = utf8(static_cast<Il2CppString*>(value));
+    if (void* value = property("get_textBounds")) {
+        const auto* v = static_cast<float*>(objectUnbox(value));
+        item["text_bounds_center"] = {v[0], v[1], v[2]};
+        item["text_bounds_extents"] = {v[3], v[4], v[5]};
+    }
+    const auto metrics = [&](void* font) {
+        const auto m = verticalMetrics(font);
+        return nlohmann::json{{"point_size", m.pointSize}, {"scale", m.scale},
+            {"ascent", m.ascent}, {"descent", m.descent},
+            {"line_height", fontLineHeight(item["font_size"].get<float>(), m)}};
+    };
+    if (void* font = property("get_font")) {
+        item["font_metrics"] = metrics(font);
+        const auto original = labelOriginalFonts.find(font);
+        if (original != labelOriginalFonts.end()) item["original_font_metrics"] = metrics(original->second);
+    }
     const auto encoded = item.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
     std::lock_guard<std::mutex> lock(dumpMutex);
     if (captureAcceptingRecords.load() && generation == layoutCaptureGeneration.load()) {
@@ -599,7 +637,7 @@ void refreshStorySwapTitle(void* self) {
     if (tracked != trackedTexts.end() && tracked->second.rendered == utf8(current))
         tracked->second.rendered = utf8(replacement);
     origTmpSetText(self, replacement, const_cast<MethodInfoHead*>(setText));
-    routeTmpFontAfterSetter(self, replacement);
+    routeTmpFontAfterSetter(self);
 }
 
 Il2CppString* translateText(void* textObject, Il2CppString* original) {
@@ -615,82 +653,26 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
     if (!resolved && tagged != resolvedI18nStrings.end() && gcHandleGetTarget)
         resolved = gcHandleGetTarget(tagged->second.weakHandle) == original;
     // Preserve these English labels verbatim. The panorama glyph route and
-    // paired layout below apply its requested RHR font independently of text.
+    // paired layout below apply its requested replacement font independently of text.
     if (source == "360°LIVE" || source == "360°" || source == "LIVE") return original;
     // This message-picker prompt is drawn by a compact masked button. Replacing
     // its font asset made the label disappear in the old replace-all build.
-    // Keep that compatibility exception there; whole-label routing uses RHR.
+    // Keep that compatibility exception there; whole-label routing uses replacement.
     const bool messagePickerPrompt = fontMode == FontMode::ReplaceAll &&
         (source == "选择消息" || source == "メッセージを選択");
     if (replacesCjk()) updateFont(textObject, messagePickerPrompt);
     if (replacesCjk() && textObject && runtimeInvoke && objectUnbox) {
-        // Love event stories use a separate portrait-mode name pill. Its Text
-        // child is left aligned in a 120 x 40 rect, so short replacement names
-        // appear offset inside the rounded background. Main-story labels are
-        // different objects and must keep their original styling.
+        applyPortraitNameLayout(textObject);
         static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
         static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
-        static const auto setSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_fontSize", 1);
-        static const auto getAutoSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_enableAutoSizing", 0);
-        static const auto setAutoSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_enableAutoSizing", 1);
-        static const auto getAlignment = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_alignment", 0);
-        static const auto setAlignment = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_alignment", 1);
         static const auto getRectTransform = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform", 0);
         static const auto getRect = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect", 0);
         static const auto getParent = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "get_parent", 0);
-        if (getName && getSize && setSize && getAlignment && setAlignment &&
-            getRectTransform && getRect && getParent) {
+        if (getName && getSize && getRectTransform && getRect && getParent) {
             void* exception = nullptr;
             auto* name = static_cast<Il2CppString*>(runtimeInvoke(getName, textObject, nullptr, &exception));
-            if (!exception && utf8(name) == "Text") {
-                void* sizeBox = runtimeInvoke(getSize, textObject, nullptr, &exception);
-                const float size = sizeBox ? *static_cast<float*>(objectUnbox(sizeBox)) : 0.0f;
-                if (!exception && knownFontValue(textObject, "portrait-name-size", size) >= 39.0f && knownFontValue(textObject, "portrait-name-size", size) <= 64.5f) {
-                    void* transform = runtimeInvoke(getRectTransform, textObject, nullptr, &exception);
-                    void* rectBox = transform ? runtimeInvoke(getRect, transform, nullptr, &exception) : nullptr;
-                    void* parent = transform ? runtimeInvoke(getParent, transform, nullptr, &exception) : nullptr;
-                    auto* parentName = parent ? static_cast<Il2CppString*>(runtimeInvoke(getName, parent, nullptr, &exception)) : nullptr;
-                    const auto* rect = rectBox ? static_cast<float*>(objectUnbox(rectBox)) : nullptr;
-                    if (!exception && rect && utf8(parentName) == "Name Label" &&
-                        std::fabs(rect[2] - 120.0f) < 1.0f &&
-                        std::fabs(rect[3] - 40.0f) < 1.0f) {
-                        originalFontValue(textObject, "portrait-name-size", size);
-                        void* alignmentBox = runtimeInvoke(getAlignment, textObject, nullptr, &exception);
-                        if (!exception && alignmentBox &&
-                            *static_cast<int*>(objectUnbox(alignmentBox)) == 4097) {
-                            int centered = 4098; // TMP midline center; preserve vertical alignment.
-                            void* args[] = {&centered};
-                            runtimeInvoke(setAlignment, textObject, args, &exception);
-                            if (exception) LOGE("Cannot center portrait story name");
-                        }
-                        const auto translated = textDict.find(source);
-                        const std::string& label = translated != textDict.end() && !translated->second.empty()
-                            ? translated->second : source;
-                        const size_t characters = std::count_if(label.begin(), label.end(),
-                            [](unsigned char byte) { return (byte & 0xc0) != 0x80; });
-                        void* autoBox = getAutoSize
-                            ? runtimeInvoke(getAutoSize, textObject, nullptr, &exception) : nullptr;
-                        const bool wasAuto = autoBox && *static_cast<bool*>(objectUnbox(autoBox));
-                        bool desiredAuto = characters > profileValue("portrait_love_event_name", "auto_size_when_characters_gt");
-                        if (!exception && autoBox && setAutoSize && wasAuto != desiredAuto) {
-                            void* args[] = {&desiredAuto};
-                            runtimeInvoke(setAutoSize, textObject, args, &exception);
-                            if (exception) LOGE("Cannot set portrait story name auto size");
-                        }
-                        // Disabling TMP auto sizing lets the existing 40-point
-                        // setting fill this pill like the original FOT glyphs.
-                        const float desiredSize = profileValue("portrait_love_event_name", "font_size_base_unity") * profileValue("portrait_love_event_name", "font_size_ratio");
-                        if (!exception && std::fabs(size - desiredSize) > 0.5f) {
-                            float chosenSize = desiredSize;
-                            void* args[] = {&chosenSize};
-                            runtimeInvoke(setSize, textObject, args, &exception);
-                            if (exception) LOGE("Cannot size portrait story name");
-                        }
-                    }
-                }
-            }
             if (!exception && utf8(name) == "Message Text") {
-                // The full SC rounded font uses slightly taller line metrics
+                // The replacement font uses taller line metrics
                 // than the game's FOT font. Keep portrait dialogue at the
                 // original screen-space baseline interval.
                 static const auto getLineSpacing = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_lineSpacing", 0);
@@ -742,7 +724,7 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
     }
     if (replacesCjk() && textObject && runtimeInvoke && objectUnbox) {
         // Home bond talks use a fixed 800 x 190 dialogue box. The replacement
-        // rounded font appears larger than the game's FOT glyphs at its
+        // replacement font appears larger than the game's FOT glyphs at its
         // original 48-point setting. Restrict the adjustment to this prefab.
         static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
         static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
@@ -816,6 +798,15 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
             updateFont(textObject, messagePickerPrompt);
         return original;
     }
+    if (textObject && source == "を" && stringNew) {
+        const auto ticket = textDict.find("チケット");
+        const auto purchase = textDict.find("購入");
+        const bool localized = ticket != textDict.end() && !ticket->second.empty() &&
+            ticket->second != ticket->first && purchase != textDict.end() &&
+            !purchase->second.empty() && purchase->second != purchase->first;
+        if (premium_gacha_labels::hidePurchaseParticle(source, textObjectPath(textObject), localized))
+            return stringNew("");
+    }
     const auto legal = legalTextDict.find(source);
     if (legal != legalTextDict.end() && stringNew) {
         updateFont(textObject, messagePickerPrompt);
@@ -832,7 +823,17 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
             }
         }
     }
-    // Only these captured home-work labels contain the activity-name parameter.
+    if (textObject && fan_event_ranking::mayMatch(source, textDict)) {
+        const auto pattern = i18nDict.find("fanEvent.ranking.sheet.description");
+        const auto group = i18nDict.find("common.group.prefix");
+        if (pattern != i18nDict.end() && group != i18nDict.end()) {
+            const auto translated = fan_event_ranking::translate(source, textObjectPath(textObject),
+                textDict, pattern->second, group->second);
+            if (!translated.empty() && stringNew)
+                return translated == source ? original : stringNew(translated.c_str());
+        }
+    }
+    // Reviewed home and in-work footer labels contain the activity-name parameter.
     // Check the text first so ordinary labels never pay for a hierarchy walk.
     if (textObject && homeActivityNames.mayMatch(source)) {
         const auto path = textObjectPath(textObject);
@@ -1046,7 +1047,7 @@ void refreshTranslatedText(void* self) {
     }
     if (utf8(replacement) != it->second.rendered) {
         origTmpSetText(self, replacement, const_cast<MethodInfoHead*>(setText));
-        routeTmpFontAfterSetter(self, replacement);
+        routeTmpFontAfterSetter(self);
         restoreStoryNameColor(self);
         it->second.rendered = utf8(replacement);
         static std::atomic<int> reported{0};
@@ -1059,7 +1060,7 @@ void hookTmpSetText(void* self, Il2CppString* value, void* method) {
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetText(self, translated, method);
-    routeTmpFontAfterSetter(self, translated);
+    routeTmpFontAfterSetter(self);
     restoreStoryNameColor(self);
     relayoutBondTalkName(self);
 }
@@ -1068,7 +1069,7 @@ void hookTmpSetTextOne(void* self, Il2CppString* value, void* method) {
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetTextOne(self, translated, method);
-    routeTmpFontAfterSetter(self, translated);
+    routeTmpFontAfterSetter(self);
     restoreStoryNameColor(self);
     relayoutBondTalkName(self);
 }
@@ -1077,7 +1078,7 @@ void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* me
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetTextTwo(self, translated, syncInput, method);
-    routeTmpFontAfterSetter(self, translated);
+    routeTmpFontAfterSetter(self);
     restoreStoryNameColor(self);
     relayoutBondTalkName(self);
 }
@@ -1086,8 +1087,7 @@ void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* me
 // batch before Unity dispatches willRenderCanvases, so static labels are added
 // to this frame's graphic rebuild queue after a data/profile/capture change.
 void hookCanvasWillRender(void* method) {
-    diagnosePickerGeometry();
-    diagnoseForumTitleGeometry();
+    collectConstrainedTitleFonts();
     const uint64_t textGeneration = translationGeneration.load(std::memory_order_acquire);
     const uint64_t fontGeneration = fontProfileGeneration.load(std::memory_order_acquire);
     const uint64_t captureGeneration = layoutCaptureGeneration.load(std::memory_order_acquire);
@@ -1294,6 +1294,10 @@ void fitCapturedButtonLabel(void* self) {
 
 #include "panorama_label_runtime.inc"
 #include "gallery_footer_layout.inc"
+#include "love_mission_layout.inc"
+#include "gacha_pickup_layout.inc"
+#include "guild_top_layout.inc"
+#include "activity_result_layout.inc"
 
 void refreshLoveEpisodeLabel(void* self) {
     if (!self || !runtimeInvoke || !objectUnbox || !origTmpSetText || !stringNew) return;
@@ -1305,21 +1309,6 @@ void refreshLoveEpisodeLabel(void* self) {
     static const auto setText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_text", 1);
     auto* current = getText ? static_cast<Il2CppString*>(runtimeInvoke(getText, self, nullptr, &error)) : nullptr;
     if (error || !current || !setText) return;
-    static int stateReports = 0;
-    if (stateReports < 12 && classGetFieldFromName && fieldGetValue) {
-        static void* klass = findClass("Unity.TextMeshPro.dll", "TMPro", "TMP_Text");
-        static void* field = klass ? classGetFieldFromName(klass, "m_TextProcessingArray") : nullptr;
-        Il2CppByteArray* array = nullptr;
-        if (field) fieldGetValue(self, field, &array);
-        std::string codepoints;
-        if (array && array->length <= 65536) {
-            const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(array->data);
-            for (size_t i = 0; i < std::min<size_t>(array->length, 12) && chars[i].unicode; ++i)
-                codepoints += std::to_string(chars[i].unicode) + ",";
-        }
-        ++stateReports;
-        LOGI("Love episode pre-render: text=%s buffer=%s", utf8(current).c_str(), codepoints.c_str());
-    }
     const auto desired = love_episode_label::format(love_episode_label::path, utf8(current));
     if (!desired) return;
     static const auto getTransform = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform", 0);
@@ -1408,17 +1397,45 @@ void refreshDefaultUiFont(void* self) {
         void* error = nullptr;
         auto* text = getText ? static_cast<Il2CppString*>(runtimeInvoke(getText, self, nullptr, &error)) : nullptr;
         getterKnown = !error && text && text->length > 0;
-        if (getterKnown) getterNumeric = ui_font_policy::isNumericCount(static_cast<size_t>(text->length),
+        if (getterKnown) getterNumeric = ui_font_policy::isNumericSymbolText(static_cast<size_t>(text->length),
             [&](size_t i) { return text->chars[i]; });
     }
     const auto route = ui_font_policy::preRenderRoute(path, glyphKnown,
-        glyphKnown && baseline->glyphNumericCount, getterKnown, getterNumeric);
+        glyphKnown && baseline->glyphNumericSymbols, getterKnown, getterNumeric);
     if (route == ui_font_policy::PreRenderRoute::Defer) return;
-    const bool useRhr = route == ui_font_policy::PreRenderRoute::Replacement;
+    const bool useReplacement = route == ui_font_policy::PreRenderRoute::Replacement;
     // Preserve an existing picker/forum metric variant when only refreshing
     // its material or rebinding after a prefab reset. Glyph routing remains
     // authoritative for selecting a new variant after the text changes.
-    updateFont(self, false, &useRhr, false, nullptr, 0, true);
+    updateFont(self, false, &useReplacement, false, nullptr, 0, true);
+}
+
+// The shared header has ample room for three Chinese characters at 26pt.
+// Scope by the captured label path and original bounds; its adjacent level
+// number remains governed by the existing original-font policy.
+void sizeHeaderManagerLabel(void* self) {
+    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    auto* name = static_cast<Il2CppString*>(readFontProperty(self,
+        "UnityEngine.CoreModule.dll","UnityEngine","Object","get_name"));
+    if (utf8(name) != "ManagerLabel" || textObjectPath(self) !=
+        "WindowSystem/WindowRoot/HeaderCanvas/ContentArea/HeaderRoot/ManagerLevel/ManagerLabel") return;
+    const auto property = [&](const char* key) {
+        return readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text",key);
+    };
+    auto* text = static_cast<Il2CppString*>(property("get_text"));
+    if (utf8(text) != "经纪人") return;
+    void* transform = property("get_rectTransform");
+    void* bounds = readFontProperty(transform,"UnityEngine.CoreModule.dll","UnityEngine","RectTransform","get_rect");
+    void* sizeBox = property("get_fontSize");
+    const auto* rect = bounds ? static_cast<float*>(objectUnbox(bounds)) : nullptr;
+    if (!rect || !sizeBox || std::fabs(rect[2]-118) > .5f || std::fabs(rect[3]-39) > .5f) return;
+    const float size = *static_cast<float*>(objectUnbox(sizeBox));
+    if (!std::isfinite(size) || std::fabs(size-22) > .1f) return;
+    static const auto setSize = methodInfo("Unity.TextMeshPro.dll","TMPro","TMP_Text","set_fontSize",1);
+    if (!setSize) return;
+    float desired = 26; void* args[] = {&desired}; void* error = nullptr;
+    runtimeInvoke(setSize,self,args,&error);
+    if (error) LOGE("Cannot size header manager label");
 }
 
 void hookTmpPreRender(void* self, void* method) {
@@ -1429,9 +1446,16 @@ void hookTmpPreRender(void* self, void* method) {
     refreshLoveEpisodeLabel(self);
     // Resolve after set_text and again after prefab font resets, before mesh creation.
     refreshDefaultUiFont(self);
+    sizeHeaderManagerLabel(self);
     applyStorySubtitleLayout(self);
     fitPanoramaLabels(self);
     alignGallerySearchFooter(self);
+    alignLoveMissionLabels(self);
+    alignGachaPickupLabels(self);
+    alignGuildTopTitles(self);
+    alignGuildPointNumbers(self);
+    alignActivityReceiveName(self);
+    alignActivityResultAile(self);
     if (self && fontProfileGeneration.load() > 1 && runtimeInvoke) {
         std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
         auto* baseline = fontBaseline(self);
@@ -1570,10 +1594,11 @@ void hookTmpPreRender(void* self, void* method) {
         }
     }
     fitCapturedButtonLabel(self);
-    captureTextLayout(self);
+    applyPortraitNameLayout(self);
     origTmpPreRender(self, method);
     synchronizeTmpRendererMaterial(self);
-    diagnoseHomeTalkGlyph(self, "post_prerender");
+    captureTextLayout(self);
+    synchronizeActivityNameSubmeshFrame(self);
 }
 
 void hookLegacySetText(void* self, Il2CppString* value, void* method) {
@@ -2044,9 +2069,98 @@ const MethodInfoHead* instantiateUnityObject() {
     return nullptr;
 }
 
-enum class StoryStyle { Subtitle, SpeakerName };
+using StoryStyle = StoryFontRole;
 
-std::unordered_map<void*, uint32_t> storyMaterials[2];
+bool setCachedFontRetention(void* object, bool retained);
+
+bool unityObjectAlive(void* object) {
+    if (!object || !runtimeInvoke) return false;
+    // A GC handle can outlive the native Unity object. Testing only the managed
+    // pointer reuses destroyed materials after a scene's unused-asset sweep.
+    static void* klass = findClass("UnityEngine.CoreModule.dll", "UnityEngine", "Object");
+    static void* nativeField = klass && classGetFieldFromName
+        ? classGetFieldFromName(klass, "m_CachedPtr") : nullptr;
+    if (nativeField && fieldGetValue) {
+        void* native = nullptr;
+        fieldGetValue(object, nativeField, &native);
+        return native != nullptr;
+    }
+    static const auto implicit = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "op_Implicit", 1);
+    void* error = nullptr;
+    void* args[] = {object};
+    auto* result = implicit ? runtimeInvoke(implicit, nullptr, args, &error) : nullptr;
+    return !error && result && objectUnbox && *static_cast<bool*>(objectUnbox(result));
+}
+
+struct CachedStoryMaterial { uint32_t sourceHandle, materialHandle; };
+std::unordered_map<void*, CachedStoryMaterial> storyMaterials[2];
+std::unordered_map<void*, CachedStoryMaterial> storySourceMaterials[2];
+
+void* savedStorySource(void* originalFont, StoryStyle style) {
+    if (style == StoryStyle::None || !gcHandleGetTarget) return nullptr;
+    const auto& cache = storySourceMaterials[static_cast<int>(style)];
+    const auto found = cache.find(originalFont);
+    if (found == cache.end()) return nullptr;
+    void* material = gcHandleGetTarget(found->second.materialHandle);
+    return unityObjectAlive(material) ? material : nullptr;
+}
+
+void* rememberStorySource(void* originalFont, void* material, StoryStyle style) {
+    if (void* saved = savedStorySource(originalFont, style)) return saved;
+    static const auto instantiate = instantiateUnityObject();
+    if (style == StoryStyle::None || !instantiate || !gcHandleNew || !gcHandleFree ||
+        !unityObjectAlive(material)) return nullptr;
+    void* error = nullptr;
+    void* args[] = {material};
+    void* copy = runtimeInvoke(instantiate, nullptr, args, &error);
+    if (error || !copy || !setCachedFontRetention(copy, true)) return nullptr;
+    const uint32_t source = gcHandleNew(originalFont, false), owned = gcHandleNew(copy, false);
+    if (!source || !owned) {
+        if (source) gcHandleFree(source);
+        if (owned) gcHandleFree(owned);
+        setCachedFontRetention(copy, false);
+        return nullptr;
+    }
+    auto& cache = storySourceMaterials[static_cast<int>(style)];
+    const auto previous = cache.find(originalFont);
+    if (previous != cache.end()) {
+        gcHandleFree(previous->second.sourceHandle);
+        gcHandleFree(previous->second.materialHandle);
+    }
+    cache[originalFont] = {source, owned};
+    LOGI("Retained ordinary-story source style=%d", static_cast<int>(style));
+    return copy;
+}
+
+StoryFontRole ordinaryStoryRole(void* self, void* originalMaterial) {
+    if (!self || !runtimeInvoke || !objectUnbox) return StoryFontRole::None;
+    const auto found = fontBaselines.find(self);
+    auto* baseline = found != fontBaselines.end() ? fontBaseline(self) : nullptr;
+    if (baseline) {
+        const auto role = baseline->values.find("story_role");
+        if (role != baseline->values.end()) return static_cast<StoryFontRole>(static_cast<int>(role->second));
+    }
+    static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
+    static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
+    if (!getName || !getSize || !originalMaterial) return StoryFontRole::None;
+    void* error = nullptr;
+    auto* name = static_cast<Il2CppString*>(runtimeInvoke(getName, self, nullptr, &error));
+    const auto label = utf8(name);
+    if (error || (label != "Message Label" && label != "Name Label")) return StoryFontRole::None;
+    auto* sizeBox = runtimeInvoke(getSize, self, nullptr, &error);
+    float width = 0;
+    if (error || !sizeBox || !materialFloat(originalMaterial, "_OutlineWidth", width)) return StoryFontRole::None;
+    const float size = *static_cast<float*>(objectUnbox(sizeBox));
+    const auto role = storyFontRole(label, textObjectPath(self), size, width);
+    if (role != StoryFontRole::None) {
+        originalFontValue(self, "story_role", static_cast<float>(role));
+        if (role == StoryFontRole::Subtitle) {
+            originalFontValue(self, "story_subtitle_size", size);
+            originalFontValue(self, "story_subtitle_outline", width);
+        }
+    }
+    return role;
+}
 
 void applyStorySubtitleLayout(void* self) {
     if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
@@ -2110,6 +2224,30 @@ bool applyStoryMaterial(void* material, StoryStyle style) {
                setMaterialColor(material, "_OutlineColor", outline.data());
     }
     return true;
+}
+
+void refreshStoryMeshPadding(void* self, void* material, StoryFontRole role) {
+    if (role == StoryFontRole::None) return;
+    auto* baseline = fontBaseline(self);
+    const auto generation = fontProfileGeneration.load();
+    if (!baseline || (baseline->storyOutlineGeneration == generation &&
+                      baseline->storyOutlineMaterial == material)) return;
+    const auto update = objectGetClass && classGetMethodFromName
+        ? classGetMethodFromName(objectGetClass(self), "UpdateMeshPadding", 0) : nullptr;
+    if (!update || !applyStoryMaterial(material, role)) return;
+    void* error = nullptr;
+    runtimeInvoke(update, self, nullptr, &error);
+    if (!error) {
+        baseline->storyOutlineGeneration = generation;
+        baseline->storyOutlineMaterial = material;
+        float gradient = 0, ratio = 0, width = 0, face = 0;
+        materialFloat(material, "_GradientScale", gradient);
+        materialFloat(material, "_ScaleRatioA", ratio);
+        materialFloat(material, "_OutlineWidth", width);
+        materialFloat(material, "_FaceDilate", face);
+        LOGI("Story outline refreshed: role=%d gradient=%.1f ratio=%.4f W=%.3f D=%.3f",
+             static_cast<int>(role), gradient, ratio, width, face);
+    }
 }
 struct RouletteOutlineMaterial {
     uint32_t sourceHandle, copyHandle;
@@ -2194,26 +2332,45 @@ void refreshProfileMaterials() {
     if (applied == generation || !gcHandleGetTarget) return;
     for (int style = 0; style < 2; ++style)
         for (const auto& item : storyMaterials[style])
-            if (auto* material = gcHandleGetTarget(item.second))
-                applyStoryMaterial(material, static_cast<StoryStyle>(style));
+            if (auto* material = gcHandleGetTarget(item.second.materialHandle))
+                if (unityObjectAlive(material)) applyStoryMaterial(material, static_cast<StoryStyle>(style));
     for (const auto& item : rouletteOutlineMaterials)
         if (auto* material = gcHandleGetTarget(item.second.copyHandle)) applyRouletteOutline(material,item.second);
     applied = generation;
 }
-void* storyMaterial(void* shared, StoryStyle style) {
+void* storyMaterial(void* shared, StoryStyle style, void* stableSource = nullptr) {
     static const auto instantiate = instantiateUnityObject();
+    // One entry per original font/style, not per temporary TMP fallback. TMP
+    // can recreate its own fallback each time a story screen is opened.
+    void* key = stableSource ? stableSource : shared;
     auto& cache = storyMaterials[static_cast<int>(style)];
-    const auto found = cache.find(shared);
+    const auto found = cache.find(key);
     if (found != cache.end() && gcHandleGetTarget) {
-        void* cached = gcHandleGetTarget(found->second);
-        if (cached) { applyStoryMaterial(cached, style); return cached; }
+        void* cached = gcHandleGetTarget(found->second.materialHandle);
+        const bool alive = unityObjectAlive(cached);
+        if (alive && materialTexture(cached, "_MainTex") == materialTexture(shared, "_MainTex") &&
+            applyStoryMaterial(cached, style)) return cached;
+        if (alive) setCachedFontRetention(cached, false);
+        if (gcHandleFree) {
+            gcHandleFree(found->second.sourceHandle);
+            gcHandleFree(found->second.materialHandle);
+        }
+        cache.erase(found);
+        LOGI("Discarded stale ordinary-story material style=%d", static_cast<int>(style));
     }
-    if (!instantiate || !gcHandleNew || !runtimeInvoke) return nullptr;
+    if (!instantiate || !gcHandleNew || !gcHandleFree || !runtimeInvoke || !unityObjectAlive(shared)) return nullptr;
     void* args[] = {shared};
     void* exception = nullptr;
     void* copy = runtimeInvoke(instantiate, nullptr, args, &exception);
-    if (exception || !copy || !applyStoryMaterial(copy, style)) return nullptr;
-    cache[shared] = gcHandleNew(copy, false);
+    if (exception || !copy || !applyStoryMaterial(copy, style) || !setCachedFontRetention(copy, true)) return nullptr;
+    const uint32_t source = gcHandleNew(key, false), owned = gcHandleNew(copy, false);
+    if (!source || !owned) {
+        if (source) gcHandleFree(source);
+        if (owned) gcHandleFree(owned);
+        setCachedFontRetention(copy, false);
+        return nullptr;
+    }
+    cache[key] = {source, owned};
     LOGI("Created isolated story material style=%d", static_cast<int>(style));
     return copy;
 }
@@ -2263,34 +2420,32 @@ bool setCachedFontRetention(void* object, bool retained) {
 
 #include "standalone_font_bundle.inc"
 
-void* loadedCjkFont(bool independentRhr = false) {
+void* loadedCjkFont(bool independentReplacement = false) {
     std::lock_guard<std::recursive_mutex> lock(fontMutex);
-    auto& handle = independentRhr ? loadedCjkOnlyFontHandle : loadedFontHandle;
+    auto& handle = independentReplacement ? loadedReplacementFontHandle : loadedFontHandle;
     if (handle && gcHandleGetTarget) {
         void* cached = gcHandleGetTarget(handle);
         if (cached) return cached;
     }
-    // A standalone module may never have an RHR font in the game's resources.
-    // Keep retrying for fonts loaded by later scenes, without scanning on every
-    // text callback. Each source has its own schedule so modes cannot starve it.
+    // Throttle retries while the module bundle or a legacy scene font is not
+    // ready. Each source has its own schedule so modes cannot starve it.
     using FontScanClock = std::chrono::steady_clock;
     struct FontScanState {
         FontScanClock::time_point nextScan{};
         FontScanClock::time_point nextDiagnostic{};
     };
     static FontScanState scans[2];
-    auto& scan = scans[independentRhr ? 1 : 0];
+    auto& scan = scans[independentReplacement ? 1 : 0];
     const auto now = FontScanClock::now();
     if (now < scan.nextScan) return nullptr;
     scan.nextScan = now + std::chrono::seconds(2);
     const bool report = now >= scan.nextDiagnostic;
     if (report) scan.nextDiagnostic = now + std::chrono::seconds(60);
-    // Prefer the module-owned font so updating the plugin also updates fonts
-    // on older LSPatch packages that still contain an embedded RHR font.
-    if (independentRhr) {
-        if (void* standalone = loadStandaloneRhrFont(report)) return standalone;
-    }
-    const char* wanted = independentRhr ? "Localify-ResourceHanRoundedSC-ExtraBold" : "FOT-UDKakugo_LargePro-DB";
+    // Current modes use only the module's selected font. A temporary bundle
+    // failure must not cache an older embedded typeface under the same asset
+    // key and prevent every subsequent module retry.
+    if (independentReplacement) return loadStandaloneReplacementFont(report);
+    const char* wanted = "FOT-UDKakugo_LargePro-DB";
     void* klass = findClass("UnityEngine.TextRenderingModule.dll", "UnityEngine", "Font");
     const auto findAll = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine",
                                     "Resources", "FindObjectsOfTypeAll", 1);
@@ -2318,10 +2473,6 @@ void* loadedCjkFont(bool independentRhr = false) {
         const std::string label = utf8(name);
         if (report) LOGI("Loaded Unity Font: %s", label.c_str());
         if (label == wanted) {
-            if (independentRhr && !setCachedFontRetention(font, true)) {
-                if (report) LOGE("Cannot retain independent RHR source font");
-                return nullptr;
-            }
             if (gcHandleNew) handle = gcHandleNew(font, false);
             if (handle || report) LOGI("Found Unity source font: %s", wanted);
             return font;
@@ -2348,20 +2499,20 @@ void updateLegacyFont(void* textObject, Il2CppString* rendered) {
         originalLegacyFonts.erase(saved);
         saved = originalLegacyFonts.end();
     }
-    const bool useRhr = fontMode == FontMode::ReplaceUi
+    const bool useReplacement = fontMode == FontMode::ReplaceUi
         ? ui_font_policy::usesReplacement(uiFontPolicyPath(textObject),
-            rendered->length >= 0 && ui_font_policy::isNumericCount(static_cast<size_t>(rendered->length),
+            rendered->length >= 0 && ui_font_policy::isNumericSymbolText(static_cast<size_t>(rendered->length),
                 [&](size_t i) { return rendered->chars[i]; }))
         : (rendered->length > 0 &&
            mixed_font_router::hasCjk(rendered->chars, static_cast<size_t>(rendered->length)));
     // Classification uses the translated setter argument, never the previous text.
-    if (!useRhr && saved == originalLegacyFonts.end()) return;
+    if (!useReplacement && saved == originalLegacyFonts.end()) return;
     void* exception = nullptr;
     void* current = runtimeInvoke(getFont, textObject, nullptr, &exception);
     if (exception || !current) return;
-    void* replacement = useRhr ? loadedCjkFont(true) : gcHandleGetTarget(saved->second.fontHandle);
+    void* replacement = useReplacement ? loadedCjkFont(true) : gcHandleGetTarget(saved->second.fontHandle);
     if (!replacement) return;
-    if (useRhr && current != replacement) {
+    if (useReplacement && current != replacement) {
         if (saved == originalLegacyFonts.end()) {
             static uint32_t insertions = 0;
             if ((++insertions % 32) == 0) {
@@ -2390,34 +2541,61 @@ void updateLegacyFont(void* textObject, Il2CppString* rendered) {
         runtimeInvoke(setFont, textObject, args, &exception);
         if (exception) return;
     }
-    if (!useRhr) {
+    if (!useReplacement) {
         release(saved->second);
         originalLegacyFonts.erase(saved);
     }
-    // Fixed public UI phrase only; never log arbitrary text or player values.
-    if (utf8(rendered).find("开始") != std::string::npos) {
-        static int reported = 0;
-        if (reported++ < 12) {
-            static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
-            void* error = nullptr;
-            auto* oldName = getName ? static_cast<Il2CppString*>(runtimeInvoke(getName, current, nullptr, &error)) : nullptr;
-            const std::string sourceName = error ? "?" : utf8(oldName);
-            error = nullptr;
-            auto* newName = getName ? static_cast<Il2CppString*>(runtimeInvoke(getName, replacement, nullptr, &error)) : nullptr;
-            LOGI("Legacy start label font route: source=%s target=%s replacement=%d changed=%d",
-                 sourceName.c_str(), error ? "?" : utf8(newName).c_str(), useRhr, current != replacement);
-        }
-    }
 }
 
-void* createPickerRhrClone(void* normalRhr, const std::string& glyphText = "选择消息") {
-    if (!normalRhr || !runtimeInvoke || !classGetMethods || !methodGetName ||
+// This pill expands horizontally with the speaker name. Automatic vertical
+// fitting to the 40-unit row makes CJK names jump from 40 to 27.6 points when
+// a later setter reuses the same label. Keep the selected size before layout.
+void applyPortraitNameLayout(void* self) {
+    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    auto* name = static_cast<Il2CppString*>(readFontProperty(self, "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
+    if (utf8(name) != "Text") return;
+    static const std::string suffix = "/Love UI/Message Area/Message Container/Message Root/Name Container/Layout Group/Name Label/Text";
+    const auto path = textObjectPath(self);
+    if (path.size() < suffix.size() || path.compare(path.size() - suffix.size(), suffix.size(), suffix)) return;
+    const auto property = [&](const char* key) { return readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", key); };
+    void* transform = property("get_rectTransform");
+    void* rectBox = readFontProperty(transform, "UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect");
+    void* maxBox = property("get_fontSizeMax");
+    void* sizeBox = property("get_fontSize");
+    void* autoBox = property("get_enableAutoSizing");
+    if (!rectBox || !maxBox || !sizeBox || !autoBox) return;
+    const auto* rect = static_cast<float*>(objectUnbox(rectBox));
+    const float maximum = *static_cast<float*>(objectUnbox(maxBox));
+    const float size = *static_cast<float*>(objectUnbox(sizeBox));
+    if (!std::isfinite(size) || !std::isfinite(maximum) || maximum < 39 || maximum > 64.5f ||
+        !std::isfinite(rect[2]) || rect[2] <= 0 || rect[2] > 960 ||
+        !std::isfinite(rect[3]) || std::fabs(rect[3] - 40) > 1) return;
+    static const auto setAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_enableAutoSizing", 1);
+    static const auto setSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_fontSize", 1);
+    static const auto setAlignment = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_alignment", 1);
+    if (!setAuto || !setSize || !setAlignment) return;
+    void* error = nullptr;
+    const bool wasAuto = *static_cast<bool*>(objectUnbox(autoBox));
+    if (wasAuto) { bool value = false; void* args[] = {&value}; runtimeInvoke(setAuto, self, args, &error); }
+    float desired = profileValue("portrait_love_event_name", "font_size_base_unity") * profileValue("portrait_love_event_name", "font_size_ratio");
+    if (!error && std::fabs(size - desired) > .1f) { void* args[] = {&desired}; runtimeInvoke(setSize, self, args, &error); }
+    void* align = property("get_alignment");
+    if (!error && align && *static_cast<int32_t*>(objectUnbox(align)) == 4097) {
+        int32_t centered = 4098; void* args[] = {&centered}; runtimeInvoke(setAlignment, self, args, &error);
+    }
+    static int reports = 0;
+    if ((wasAuto || std::fabs(size - desired) > .1f) && reports++ < 16)
+        LOGI("Portrait name stable layout: previous_size=%.2f target_size=%.2f previous_auto=%d rect_w=%.2f exception=%d", size, desired, wasAuto, rect[2], error != nullptr);
+}
+
+void* createConstrainedFontClone(void* normalReplacement, const std::string& glyphText = "选择消息") {
+    if (!normalReplacement || !runtimeInvoke || !classGetMethods || !methodGetName ||
         !methodGetParamCount || !methodGetParam || !typeGetName || !objectGetClass || !stringNew || !objectUnbox)
         return nullptr;
     const MethodInfoHead* addCharacters = nullptr;
     const MethodInfoHead* hasCharacters = nullptr;
     void* iterator = nullptr;
-    while (const auto* candidate = classGetMethods(objectGetClass(normalRhr), &iterator)) {
+    while (const auto* candidate = classGetMethods(objectGetClass(normalReplacement), &iterator)) {
         const char* name = methodGetName(candidate);
         if (!name) continue;
         const bool add = !std::strcmp(name, "TryAddCharacters") && methodGetParamCount(candidate) == 3;
@@ -2439,30 +2617,30 @@ void* createPickerRhrClone(void* normalRhr, const std::string& glyphText = "选�
     const auto checkCoverage = [&]() -> FontCoverageCheck {
         void* args[] = {phrase};
         error = nullptr;
-        void* result = runtimeInvoke(hasCharacters, normalRhr, args, &error);
+        void* result = runtimeInvoke(hasCharacters, normalReplacement, args, &error);
         return {result && !error && *static_cast<bool*>(objectUnbox(result)), error || !result};
     };
     const bool covered = ensureFontCoverage(checkCoverage, [&]() {
         attempted = true;
         void* args[] = {phrase, &missing, &includeFeatures};
         error = nullptr;
-        void* result = runtimeInvoke(addCharacters, normalRhr, args, &error);
+        void* result = runtimeInvoke(addCharacters, normalReplacement, args, &error);
         addResult = result && !error && *static_cast<bool*>(objectUnbox(result));
         return !error && result != nullptr;
     });
     if (!covered) {
-        LOGE("Cannot prewarm constrained RHR glyphs: exception=%d attempted=%d result=%d missing_length=%d",
+        LOGE("Cannot prewarm constrained replacement glyphs: exception=%d attempted=%d result=%d missing_length=%d",
              error != nullptr, attempted, addResult, missing ? missing->length : -1);
         return nullptr;
     }
     if (!attempted || !addResult) {
         static int recovered = 0;
-        if (recovered++ < 8) LOGI("Constrained RHR coverage verified despite no new glyph addition: attempted=%d", attempted);
+        if (recovered++ < 8) LOGI("Constrained replacement coverage verified despite no new glyph addition: attempted=%d", attempted);
     }
     static const auto instantiate = instantiateUnityObject();
     static const auto setPopulation = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_FontAsset", "set_atlasPopulationMode", 1);
     if (!instantiate || !setPopulation) return nullptr;
-    void* cloneArgs[] = {normalRhr};
+    void* cloneArgs[] = {normalReplacement};
     void* clone = runtimeInvoke(instantiate, nullptr, cloneArgs, &error);
     if (error || !clone) return nullptr;
     // Instantiate copies the root's flags. Per-label clones are released when
@@ -2473,8 +2651,8 @@ void* createPickerRhrClone(void* normalRhr, const std::string& glyphText = "选�
     runtimeInvoke(setPopulation, clone, populationArgs, &error);
     if (error) return nullptr;
     // No separate texture or glyph allocation: this immutable picker clone
-    // retains the normal RHR character/glyph tables, atlas and material.
-    LOGI("Created static constrained clone sharing prewarmed normal RHR atlas");
+    // retains the normal replacement character/glyph tables, atlas and material.
+    LOGI("Created static constrained clone sharing prewarmed normal replacement atlas");
     return clone;
 }
 
@@ -2511,11 +2689,11 @@ bool normalizePickerFaceInfo(void* replacement, void* original) {
         fieldSetValue(target, field, &metric);
     }
     // Only this independently created picker asset receives original vertical
-    // line metrics. RHR glyphs, atlas, point size, scale and widths stay intact.
+    // line metrics. replacement glyphs, atlas, point size, scale and widths stay intact.
     void* args[] = {objectUnbox(target)};
     runtimeInvoke(setFace, replacement, args, &error);
     if (error) return false;
-    LOGI("Normalized picker RHR line metrics: original_point=%d target_point=%d ratio=%.4f", sourcePoint, targetPoint, ratio);
+    LOGI("Normalized picker replacement line metrics: original_point=%d target_point=%d ratio=%.4f", sourcePoint, targetPoint, ratio);
     return true;
 }
 
@@ -2541,21 +2719,32 @@ FontVerticalMetrics verticalMetrics(void* font) {
     read("m_Scale", &result.scale); read("m_AscentLine", &result.ascent); read("m_DescentLine", &result.descent);
     return result;
 }
-void reportForumRoute(void* self, const char* stage, void* normal, void* original,
-                      void* selected, float size, int overflow, const float* rect, bool pathMatch, size_t length) {
-    static int reports = 0;
-    if (reports++ >= 96) return;
-    const auto n = verticalMetrics(normal), o = verticalMetrics(original), c = verticalMetrics(selected);
-    void* current = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font");
-    void* shared = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSharedMaterial");
-    static void* assetClass = findClass("Unity.TextMeshPro.dll", "TMPro", "TMP_Asset");
-    static void* materialField = assetClass && classGetFieldFromName ? classGetFieldFromName(assetClass, "material") : nullptr;
-    void* fontMaterial = nullptr;
-    if (selected && materialField && fieldGetValue) fieldGetValue(selected, materialField, &fontMaterial);
-    LOGI("Forum route: stage=%s object=%p current=%p selected=%p original=%p normal=%p path_match=%d length=%zu size=%.2f overflow=%d rect_w=%.2f rect_h=%.2f normal_point=%.1f normal_scale=%.3f normal_ascent=%.3f normal_descent=%.3f original_point=%.1f original_scale=%.3f original_ascent=%.3f original_descent=%.3f selected_point=%.1f selected_scale=%.3f selected_ascent=%.3f selected_descent=%.3f selected_height=%.3f shared_atlas=%p selected_atlas=%p",
-         stage, self, current, selected, original, normal, pathMatch, length, size, overflow, rect ? rect[2] : -1, rect ? rect[3] : -1,
-         n.pointSize,n.scale,n.ascent,n.descent,o.pointSize,o.scale,o.ascent,o.descent,c.pointSize,c.scale,c.ascent,c.descent,fontLineHeight(size,c),
-         shared ? materialTexture(shared,"_MainTex") : nullptr, fontMaterial ? materialTexture(fontMaterial,"_MainTex") : nullptr);
+
+void* createStoryFont(void* font, void* original, void* originalMaterial) {
+    const auto source = verticalMetrics(original);
+    float gradient = 0;
+    if (!materialFloat(originalMaterial, "_GradientScale", gradient)) return nullptr;
+    int32_t point = 90, padding = storyAtlasPadding(source.pointSize, source.scale, gradient);
+    if (!padding || !fieldGetValueObject || !objectUnbox || !classGetFieldFromName) return nullptr;
+    static const auto create = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_FontAsset", "CreateFontAsset", 8);
+    static void* modeClass = findClass("UnityEngine.TextCoreFontEngineModule.dll", "UnityEngine.TextCore.LowLevel", "GlyphRenderMode");
+    static void* modeField = modeClass ? classGetFieldFromName(modeClass, "SDFAA") : nullptr;
+    void* modeBox = modeField ? fieldGetValueObject(modeField, nullptr) : nullptr;
+    if (!create || !modeBox) return nullptr;
+    int32_t renderMode = *static_cast<int32_t*>(objectUnbox(modeBox));
+    int32_t width = 1024, height = 1024, dynamicPopulation = 1;
+    bool multiAtlas = true;
+    void* args[] = {font, &point, &padding, &renderMode, &width, &height, &dynamicPopulation, &multiAtlas};
+    void* error = nullptr;
+    void* result = runtimeInvoke(create, nullptr, args, &error);
+    if (error || !result) return nullptr;
+    const auto target = verticalMetrics(result);
+    // The factory's normal face scale is 1. Never silently use a different
+    // range if a future TextCore version changes this contract.
+    if (target.pointSize != point || std::fabs(target.scale - 1) > .001f) return nullptr;
+    LOGI("Created ordinary-story SDF: original_point=%.1f original_scale=%.3f original_gradient=%.1f point=%d padding=%d render_mode=%d",
+         source.pointSize, source.scale, gradient, point, padding, renderMode);
+    return result;
 }
 void synchronizeTmpRendererMaterial(void* self) {
     if (!usesIndependentFontRouting() || !fontEnabled || !isTmpUi(self)) return;
@@ -2582,106 +2771,14 @@ void synchronizeTmpRendererMaterial(void* self) {
     };
     void* before=actualTexture();
     if (!shouldSubmitTmpRenderer(replacement,pending,expected!=nullptr,before==expected)) return;
-    static void* textClass = findClass("Unity.TextMeshPro.dll","TMPro","TMP_Text");
-    static void* dirtyField = textClass && classGetFieldFromName ? classGetFieldFromName(textClass,"m_isMaterialDirty") : nullptr;
-    bool dirty=false;
-    if (dirtyField && fieldGetValue) fieldGetValue(self,dirtyField,&dirty);
     void* error=nullptr;
     runtimeInvoke(updateMaterial,self,nullptr,&error);
     void* after=actualTexture();
     if (!baseline) baseline=fontBaseline(self);
     if (baseline) baseline->pendingRendererSubmit=pendingTmpRendererAfterSubmit(!error,after==expected);
-    static const auto getId=methodInfo("UnityEngine.CoreModule.dll","UnityEngine","Object","GetInstanceID",0);
-    const auto id=[&](void* object)->int32_t {
-        if (!object || !getId || !objectUnbox) return 0;
-        void* exception=nullptr; void* box=runtimeInvoke(getId,object,nullptr,&exception);
-        return !exception && box ? *static_cast<int32_t*>(objectUnbox(box)) : 0;
-    };
-    static int reports=0;
-    if (reports++ < 32) LOGI("TMP main renderer synchronization: object_id=%d font_id=%d pending=%d material_dirty=%d before_atlas=%d expected_atlas=%d after_atlas=%d exception=%d matched=%d",
-         id(self),id(font),pending,dirty,id(before),id(expected),id(after),error!=nullptr,after==expected);
+
 }
-void diagnoseHomeTalkGlyph(void* self, const char* stage) {
-    static int reports = 0;
-    if (reports >= 24 || !self || !fieldGetValueObject || !fieldGetValue || !classGetFieldFromName || !objectGetClass || !objectUnbox) return;
-    // Exact public dialogue control; never inspect account or player text.
-    auto* name = static_cast<Il2CppString*>(readFontProperty(self,"UnityEngine.CoreModule.dll","UnityEngine","Object","get_name"));
-    if (utf8(name) != "Serif") return;
-    const std::string path = textObjectPath(self);
-    static const std::string suffix = "/Bottom/SerifWIndow/Serif";
-    if (path.size() < suffix.size() || path.compare(path.size()-suffix.size(), suffix.size(), suffix)) return;
-    const auto field = [&](void* object, const char* name) -> void* {
-        void* f = object ? classGetFieldFromName(objectGetClass(object), name) : nullptr;
-        return f ? fieldGetValueObject(f, object) : nullptr;
-    };
-    const auto integer = [&](void* object, const char* name) -> int32_t {
-        void* box = field(object,name); return box ? *static_cast<int32_t*>(objectUnbox(box)) : -1;
-    };
-    const auto real = [&](void* object, const char* name) -> float {
-        void* box = field(object,name); return box ? *static_cast<float*>(objectUnbox(box)) : -1;
-    };
-    static const MethodInfoHead* getValue = []() -> const MethodInfoHead* {
-        void* klass = findClass("mscorlib.dll", "System", "Array");
-        if (!klass || !classGetMethods || !methodGetName || !methodGetParamCount || !methodGetParam || !typeGetName) return nullptr;
-        void* iterator = nullptr;
-        while (const auto* m = classGetMethods(klass, &iterator)) {
-            if (std::strcmp(methodGetName(m),"GetValue") || methodGetParamCount(m)!=1) continue;
-            char* type = typeGetName(methodGetParam(m,0));
-            bool match = type && !std::strcmp(type,"System.Int32");
-            if (type && il2cppFree) il2cppFree(type);
-            if (match) return m;
-        }
-        return nullptr;
-    }();
-    if (!getValue) return;
-    const auto at = [&](void* array, int32_t index) -> void* {
-        if (!array) return nullptr;
-        void* error=nullptr; void* args[]={&index};
-        void* box=runtimeInvoke(getValue,array,args,&error); return error ? nullptr : box;
-    };
-    void* info = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_textInfo");
-    const int32_t count = integer(info,"characterCount");
-    if (count <= 0 || count > 128) return;
-    void* characters = field(info,"characterInfo");
-    int32_t target=-1;
-    for (int32_t i=0;i<count;++i) {
-        void* character=at(characters,i); void* box=field(character,"character");
-        if (box && *static_cast<uint16_t*>(objectUnbox(box)) == 0x540e) { target=i; break; }
-    }
-    if (target<0) return;
-    ++reports;
-    void* primary = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_font");
-    for (int32_t i=std::max(0,target-1);i<=std::min(count-1,target+1);++i) {
-        void* character=at(characters,i); void* box=field(character,"character");
-        const uint32_t cp=box ? *static_cast<uint16_t*>(objectUnbox(box)) : 0;
-        void* font=field(character,"fontAsset"); void* element=field(character,"textElement");
-        void* glyph=readFontProperty(element,"Unity.TextMeshPro.dll","TMPro","TMP_TextElement","get_glyph");
-        void* owner=readFontProperty(element,"Unity.TextMeshPro.dll","TMPro","TMP_TextElement","get_textAsset");
-        const auto glyphProperty = [&](const char* name) -> void* {
-            const auto method = glyph && classGetMethodFromName ? classGetMethodFromName(objectGetClass(glyph),name,0) : nullptr;
-            void* error=nullptr;
-            void* value=method ? runtimeInvoke(method,glyph,nullptr,&error) : nullptr;
-            return error ? nullptr : value;
-        };
-        void* atlasBox=glyphProperty("get_atlasIndex");
-        const int32_t atlas=atlasBox ? *static_cast<int32_t*>(objectUnbox(atlasBox)) : -1;
-        void* glyphBox=glyphProperty("get_index");
-        const uint32_t glyphIndex=glyphBox ? *static_cast<uint32_t*>(objectUnbox(glyphBox)) : 0;
-        void* rect=glyphProperty("get_glyphRect");
-        void* textures=readFontProperty(font,"Unity.TextMeshPro.dll","TMPro","TMP_FontAsset","get_atlasTextures");
-        void* texture=atlas>=0 ? at(textures,atlas) : nullptr;
-        void* material=field(character,"material"); void* actual=material ? materialTexture(material,"_MainTex") : nullptr;
-        const auto dimension=[&](void* t,const char* property) -> int32_t {
-            void* value=t ? readFontProperty(t,"UnityEngine.CoreModule.dll","UnityEngine","Texture",property) : nullptr;
-            return value ? *static_cast<int32_t*>(objectUnbox(value)) : -1;
-        };
-        void* bl=field(character,"vertex_BL"); void* tr=field(character,"vertex_TR");
-        void* uvBL=field(bl,"uv"); void* uvTR=field(tr,"uv");
-        LOGI("HomeTalk glyph diagnostic: stage=%s object=%p index=%d cp=%u primary=%p char_font=%p element_owner=%p glyph=%u atlas_index=%d rect_x=%d rect_y=%d rect_w=%d rect_h=%d material_index=%d material=%p expected_texture=%p expected_w=%d expected_h=%d actual_texture=%p actual_w=%d actual_h=%d uv_bl_x=%.6f uv_bl_y=%.6f uv_tr_x=%.6f uv_tr_y=%.6f uv_present=%d",
-             stage,self,i,cp,primary,font,owner,glyphIndex,atlas,integer(rect,"m_X"),integer(rect,"m_Y"),integer(rect,"m_Width"),integer(rect,"m_Height"),integer(character,"materialReferenceIndex"),material,texture,dimension(texture,"get_width"),dimension(texture,"get_height"),actual,dimension(actual,"get_width"),dimension(actual,"get_height"),real(uvBL,"x"),real(uvBL,"y"),real(uvTR,"x"),real(uvTR,"y"),uvBL && uvTR);
-    }
-}
-void releaseForumTitleFont(const ForumTitleFont& saved) {
+void releaseConstrainedTitleFont(const ConstrainedTitleFont& saved) {
     if (!gcHandleGetTarget || !gcHandleFree) return;
     if (void* font = gcHandleGetTarget(saved.fontHandle)) labelOriginalFonts.erase(font);
     gcHandleFree(saved.weakHandle); gcHandleFree(saved.fontHandle);
@@ -2690,11 +2787,11 @@ void releaseForumTitleFont(const ForumTitleFont& saved) {
         gcHandleFree(handle);
     }
 }
-void commitForumTitleFont(void* self, void* assigned) {
-    auto saved = forumTitleFonts.find(self);
-    if (saved == forumTitleFonts.end()) return;
+void commitConstrainedTitleFont(void* self, void* assigned) {
+    auto saved = constrainedTitleFonts.find(self);
+    if (saved == constrainedTitleFonts.end()) return;
     if (gcHandleGetTarget(saved->second.fontHandle) != assigned) {
-        releaseForumTitleFont(saved->second); forumTitleFonts.erase(saved); return;
+        releaseConstrainedTitleFont(saved->second); constrainedTitleFonts.erase(saved); return;
     }
     for (const auto handle : saved->second.retiredHandles) {
         if (void* font = gcHandleGetTarget(handle)) labelOriginalFonts.erase(font);
@@ -2702,33 +2799,22 @@ void commitForumTitleFont(void* self, void* assigned) {
     }
     saved->second.retiredHandles.clear();
 }
-void diagnoseForumTitleGeometry() {
-    if (!gcHandleGetTarget || !objectUnbox) return;
-    for (auto it = forumTitleFonts.begin(); it != forumTitleFonts.end();) {
+void collectConstrainedTitleFonts() {
+    if (!gcHandleGetTarget) return;
+    for (auto it = constrainedTitleFonts.begin(); it != constrainedTitleFonts.end();) {
         void* self = gcHandleGetTarget(it->second.weakHandle);
         if (!self || self != it->first) {
-            releaseForumTitleFont(it->second); it = forumTitleFonts.erase(it); continue;
-        }
-        if (it->second.diagnosticPasses > 0) {
-            --it->second.diagnosticPasses;
-            void* bounds = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_textBounds");
-            if (bounds) {
-                auto* v = static_cast<float*>(objectUnbox(bounds));
-                LOGI("Forum title geometry after: object=%p length=%zu center_x=%.2f center_y=%.2f extent_x=%.2f extent_y=%.2f",
-                     self, it->second.length, v[0], v[1], v[3], v[4]);
-                void* font = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font");
-                reportForumRoute(self, "post_geometry", nullptr, nullptr, font, 48, -1, nullptr, true, it->second.length);
-            }
-        }
-        ++it;
+            releaseConstrainedTitleFont(it->second);
+            it = constrainedTitleFonts.erase(it);
+        } else ++it;
     }
 }
-void* forumTitleFont(void* self, void* original, void* normal,
+void* constrainedTitleFont(void* self, void* original, void* normal,
                     const mixed_font_router::UnicodeChar* chars, size_t capacity) {
     if (!objectUnbox || !gcHandleGetTarget || !gcHandleNewWeak || !gcHandleNew || !gcHandleFree) return normal;
-    auto existing = forumTitleFonts.find(self);
-    if (existing != forumTitleFonts.end() && gcHandleGetTarget(existing->second.weakHandle) != self) {
-        releaseForumTitleFont(existing->second); forumTitleFonts.erase(existing); existing = forumTitleFonts.end();
+    auto existing = constrainedTitleFonts.find(self);
+    if (existing != constrainedTitleFonts.end() && gcHandleGetTarget(existing->second.weakHandle) != self) {
+        releaseConstrainedTitleFont(existing->second); constrainedTitleFonts.erase(existing); existing = constrainedTitleFonts.end();
     }
     void* sizeBox = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize");
     void* overflowBox = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_overflowMode");
@@ -2738,12 +2824,25 @@ void* forumTitleFont(void* self, void* original, void* normal,
     const float size = *static_cast<float*>(objectUnbox(sizeBox));
     const int32_t overflow = *static_cast<int32_t*>(objectUnbox(overflowBox));
     auto* rect = static_cast<float*>(objectUnbox(rectBox));
-    const auto rhrMetrics = verticalMetrics(normal), originalMetrics = verticalMetrics(original);
+    const auto replacementMetrics = verticalMetrics(normal), originalMetrics = verticalMetrics(original);
     const std::string path = textObjectPath(self);
-    const bool pathMatch = path.find("/ForumThreadListCell(Clone)/Button/Title") != std::string::npos;
-    if (!forumTitleMetricsGuard(path, rect[2], rect[3], size, overflow, rhrMetrics, originalMetrics)) {
-        if (pathMatch || existing != forumTitleFonts.end())
-            reportForumRoute(self, "guard_false", normal, original, normal, size, overflow, rect, pathMatch, 0);
+    const auto kind = constrainedTitle(path);
+    float guardSize = size;
+    if (kind == ConstrainedTitle::ClippedLabel) {
+        void* autoBox = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_enableAutoSizing");
+        if (!autoBox || *static_cast<bool*>(objectUnbox(autoBox))) return normal;
+    }
+    if (constrainedTitleUsesAutoSize(kind)) {
+        // TMP may already have reduced the label to fit the replacement's
+        // taller ascent/descent. Validate at its original maximum, retaining
+        // automatic width fitting for long text after metrics are restored.
+        void* autoBox = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_enableAutoSizing");
+        void* maxBox = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSizeMax");
+        if (!autoBox || !maxBox || !*static_cast<bool*>(objectUnbox(autoBox))) return normal;
+        guardSize = *static_cast<float*>(objectUnbox(maxBox));
+        if (!std::isfinite(size) || size <= 0 || size > guardSize + .5f) return normal;
+    }
+    if (!constrainedTitleMetricsGuard(path, rect[2], rect[3], guardSize, overflow, replacementMetrics, originalMetrics)) {
         return normal;
     }
     uint64_t signature = 1469598103934665603ULL;
@@ -2757,13 +2856,10 @@ void* forumTitleFont(void* self, void* original, void* normal,
         else { glyphs.push_back(static_cast<char16_t>(0xd800 + ((c - 0x10000) >> 10)));
                glyphs.push_back(static_cast<char16_t>(0xdc00 + ((c - 0x10000) & 0x3ff))); }
     }
-    if (existing != forumTitleFonts.end() && existing->second.signature == signature && existing->second.length == length) {
+    if (existing != constrainedTitleFonts.end() && existing->second.signature == signature && existing->second.length == length) {
         if (void* cached = gcHandleGetTarget(existing->second.fontHandle)) {
             const auto mapped = labelOriginalFonts.find(cached);
             if (mapped != labelOriginalFonts.end() && mapped->second == original) {
-                reportForumRoute(self, "cache_hit", normal, original, cached, size, overflow, rect, pathMatch, length);
-                static int resamples = 0;
-                if (resamples++ < 16) existing->second.diagnosticPasses = 3;
                 return cached;
             }
         }
@@ -2771,23 +2867,22 @@ void* forumTitleFont(void* self, void* original, void* normal,
     // Static clones also need the glyph TMP inserts when a long title is elided.
     glyphs.push_back(u'\u2026');
     std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
-    void* clone = createPickerRhrClone(normal, converter.to_bytes(glyphs));
+    void* clone = createConstrainedFontClone(normal, converter.to_bytes(glyphs));
     if (!clone || !normalizePickerFaceInfo(clone, original)) {
-        reportForumRoute(self, "clone_failed", normal, original, normal, size, overflow, rect, pathMatch, length);
+        LOGE("Cannot normalize constrained label font metrics");
         return normal;
     }
-    reportForumRoute(self, "new_clone", normal, original, clone, size, overflow, rect, pathMatch, length);
     const uint32_t weak = gcHandleNewWeak(self, false);
     if (!weak) return normal;
     const uint32_t handle = gcHandleNew(clone, false);
     if (!handle) { gcHandleFree(weak); return normal; }
     std::vector<uint32_t> retired;
-    if (existing != forumTitleFonts.end()) {
+    if (existing != constrainedTitleFonts.end()) {
         void* currentFont = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font");
         retired = std::move(existing->second.retiredHandles);
         retired.push_back(existing->second.fontHandle);
         gcHandleFree(existing->second.weakHandle);
-        forumTitleFonts.erase(existing);
+        constrainedTitleFonts.erase(existing);
         // Retain the font still assigned to this label until both font and
         // material setters commit. Failed earlier candidates need no retention.
         for (auto it = retired.begin(); it != retired.end();) {
@@ -2797,21 +2892,13 @@ void* forumTitleFont(void* self, void* original, void* normal,
             } else ++it;
         }
     }
-    static int reports = 0;
-    const int diagnostics = reports++ < 16 ? 3 : 0;
-    forumTitleFonts.emplace(self, ForumTitleFont{weak, handle, signature, length, diagnostics, std::move(retired)});
+    constrainedTitleFonts.emplace(self, ConstrainedTitleFont{weak, handle, signature, length, std::move(retired)});
     labelOriginalFonts[clone] = original;
-    if (diagnostics) {
-        void* bounds = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_textBounds");
-        auto* v = bounds ? static_cast<float*>(objectUnbox(bounds)) : nullptr;
-        LOGI("Forum title metric guard before: length=%zu overflow=%d size=%.1f rect_height=%.1f rhr_height=%.2f original_height=%.2f bounds_x=%.2f bounds_y=%.2f",
-             length, overflow, size, rect[3], fontLineHeight(size, rhrMetrics), fontLineHeight(size, originalMetrics), v ? v[3] : 0, v ? v[4] : 0);
-    }
     return clone;
 }
 
 void updateFont(void* textObject, bool preserveOriginalFont, const bool* replacementOverride, bool pickerMetrics,
-                const mixed_font_router::UnicodeChar* forumBuffer, size_t forumCapacity, bool keepMetricVariant) {
+                const mixed_font_router::UnicodeChar* titleBuffer, size_t titleCapacity, bool keepMetricVariant) {
     // Formatted Solis labels can keep get_text empty while their Unicode buffer
     // contains CJK. Only the glyph-lookup buffer is authoritative in this mode;
     // getter-based setter/pre-render calls must not undo its font/material.
@@ -2843,17 +2930,19 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
     void* asset = runtimeInvoke(getFont, textObject, nullptr, &exception);
     if (exception || !asset) return;
     void* labelReplacement = nullptr;
+    StoryFontRole storyRole = StoryFontRole::None;
+    void* storySource = nullptr;
     if (usesIndependentFontRouting()) {
-        // Route complete labels through an independent RHR asset. The caller
+        // Route complete labels through an independent replacement asset. The caller
         // selects the current policy; snapshots retain original font/material
         // for numeric counts and design exceptions.
         const auto original = labelOriginalFonts.find(asset);
-        const bool usingRhr = original != labelOriginalFonts.end();
-        void* originalAsset = usingRhr ? original->second : asset;
+        const bool usingReplacement = original != labelOriginalFonts.end();
+        void* originalAsset = usingReplacement ? original->second : asset;
         static const auto getText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_text", 0);
         auto* text = !replacementOverride && getText
             ? static_cast<Il2CppString*>(runtimeInvoke(getText, textObject, nullptr, &exception)) : nullptr;
-        const bool useRhr = replacementOverride ? *replacementOverride :
+        const bool useReplacement = replacementOverride ? *replacementOverride :
             (!exception && text && text->length > 0 &&
              mixed_font_router::hasCjk(text->chars, static_cast<size_t>(text->length)));
         if (exception || !instanceId || !gcHandleGetTarget || !gcHandleFree) return;
@@ -2869,7 +2958,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         }
         // Untouched native labels require neither material retention nor a weak
         // handle. A prefab may already have restored its original font itself.
-        if (!useRhr && !usingRhr) {
+        if (!useReplacement && !usingReplacement) {
             auto saved = originalLabelStyles.find(instanceId);
             if (saved != originalLabelStyles.end()) {
                 // Retry only our own interrupted restore. If the game itself
@@ -2881,7 +2970,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                     runtimeInvoke(setSharedMaterial, textObject, materialArgs, &exception);
                     if (exception) return;
                 }
-                commitForumTitleFont(textObject, originalAsset);
+                commitConstrainedTitleFont(textObject, originalAsset);
                 releaseSnapshot(saved->second);
                 originalLabelStyles.erase(saved);
             }
@@ -2890,8 +2979,31 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         void* sourceMaterial = getSharedMaterial
             ? runtimeInvoke(getSharedMaterial, textObject, nullptr, &exception) : nullptr;
         if (exception || !sourceMaterial || !setSharedMaterial || !gcHandleNew) return;
-        if (!useRhr) {
-            if (usingRhr) {
+        void* roleMaterial = sourceMaterial;
+        const auto originalStyle = originalLabelStyles.find(instanceId);
+        if (usingReplacement && originalStyle != originalLabelStyles.end())
+            roleMaterial = gcHandleGetTarget(originalStyle->second.materialHandle);
+        if (useReplacement) {
+            storyRole = ordinaryStoryRole(textObject, roleMaterial);
+            if (storyRole == StoryFontRole::None && !unityObjectAlive(roleMaterial)) {
+                // A pooled prefab can inherit a replaced font and a destroyed
+                // material before this particular label has a baseline.
+                for (const auto role : {StoryFontRole::Subtitle, StoryFontRole::SpeakerName}) {
+                    void* saved = savedStorySource(originalAsset, role);
+                    if (saved && ordinaryStoryRole(textObject, saved) == role) {
+                        storyRole = role;
+                        roleMaterial = saved;
+                        break;
+                    }
+                }
+            }
+            if (storyRole != StoryFontRole::None) {
+                storySource = rememberStorySource(originalAsset, roleMaterial, storyRole);
+                if (!unityObjectAlive(roleMaterial) && storySource) roleMaterial = storySource;
+            }
+        }
+        if (!useReplacement) {
+            if (usingReplacement) {
                 const auto saved = originalLabelStyles.find(instanceId);
                 if (saved == originalLabelStyles.end() || !gcHandleGetTarget) return;
                 void* material = gcHandleGetTarget(saved->second.materialHandle);
@@ -2903,33 +3015,38 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                 void* materialArgs[] = {material};
                 runtimeInvoke(setSharedMaterial, textObject, materialArgs, &exception);
                 if (exception) return;
-                commitForumTitleFont(textObject, originalAsset);
+                commitConstrainedTitleFont(textObject, originalAsset);
                 releaseSnapshot(saved->second);
                 originalLabelStyles.erase(saved);
             }
-            if (!useRhr) return;
+            if (!useReplacement) return;
             asset = originalAsset;
         } else {
-            void* rhr = keepMetricVariant && usingRhr ? asset : nullptr;
-            auto& targets = pickerMetrics ? pickerRhrAssets : labelRhrAssets;
+            // Story fonts need an independent, wider SDF atlas. Do not retain
+            // a generic font that was assigned before the label was parented.
+            const bool ordinaryStory = storyRole != StoryFontRole::None;
+            void* replacementFont = keepMetricVariant && usingReplacement && !ordinaryStory ? asset : nullptr;
+            auto& targets = ordinaryStory ? storyReplacementAssets : (pickerMetrics ? pickerReplacementAssets : labelReplacementAssets);
             const auto cached = targets.find(originalAsset);
-            if (!rhr && cached != targets.end() && gcHandleGetTarget)
-                rhr = gcHandleGetTarget(cached->second.rhrHandle);
-            if (!rhr) {
+            if (!replacementFont && cached != targets.end() && gcHandleGetTarget)
+                replacementFont = gcHandleGetTarget(cached->second.replacementHandle);
+            if (!replacementFont) {
                 void* normal = nullptr;
                 if (pickerMetrics) {
-                    const auto normalCached = labelRhrAssets.find(originalAsset);
-                    if (normalCached != labelRhrAssets.end() && gcHandleGetTarget)
-                        normal = gcHandleGetTarget(normalCached->second.rhrHandle);
+                    const auto normalCached = labelReplacementAssets.find(originalAsset);
+                    if (normalCached != labelReplacementAssets.end() && gcHandleGetTarget)
+                        normal = gcHandleGetTarget(normalCached->second.replacementHandle);
                 }
                 if (!normal) {
                     void* font = loadedCjkFont(true);
                     if (!font) return;
                     void* createArgs[] = {font};
-                    normal = runtimeInvoke(createFallback, nullptr, createArgs, &exception);
+                    normal = ordinaryStory ? createStoryFont(font, originalAsset, roleMaterial)
+                        : runtimeInvoke(createFallback, nullptr, createArgs, &exception);
+                    if (!normal && ordinaryStory) LOGE("Cannot create ordinary-story SDF font");
                     if (exception || !normal) return;
                     if (!setCachedFontRetention(normal, true)) {
-                        LOGE("Cannot retain cached RHR font resources");
+                        LOGE("Cannot retain cached replacement font resources");
                         return;
                     }
                     if (pickerMetrics) {
@@ -2937,31 +3054,31 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                         if (!normalHandle) return;
                         const uint32_t originalHandle = gcHandleNew(originalAsset, false);
                         if (!originalHandle) { gcHandleFree(normalHandle); return; }
-                        labelRhrAssets[originalAsset] = {normalHandle, originalHandle};
+                        labelReplacementAssets[originalAsset] = {normalHandle, originalHandle};
                         labelOriginalFonts[normal] = originalAsset;
                     }
                 }
-                rhr = pickerMetrics ? createPickerRhrClone(normal) : normal;
-                if (!rhr) return;
-                if (pickerMetrics && !normalizePickerFaceInfo(rhr, originalAsset)) {
+                replacementFont = pickerMetrics ? createConstrainedFontClone(normal) : normal;
+                if (!replacementFont) return;
+                if (pickerMetrics && !normalizePickerFaceInfo(replacementFont, originalAsset)) {
                     LOGE("Cannot normalize independent picker font metrics");
                     return;
                 }
                 // Unlike forum-title clones, this picker variant also belongs
                 // to the process-lifetime cache and needs its own native root.
-                if (pickerMetrics && !setCachedFontRetention(rhr, true)) return;
-                const uint32_t rhrHandle = gcHandleNew(rhr, false);
-                if (!rhrHandle) return;
+                if (pickerMetrics && !setCachedFontRetention(replacementFont, true)) return;
+                const uint32_t replacementHandle = gcHandleNew(replacementFont, false);
+                if (!replacementHandle) return;
                 const uint32_t originalHandle = gcHandleNew(originalAsset, false);
-                if (!originalHandle) { gcHandleFree(rhrHandle); return; }
+                if (!originalHandle) { gcHandleFree(replacementHandle); return; }
                 // Pair lifetime matches the small per-original-font target cache.
-                // No original glyph fallback is attached to the full RHR asset.
-                targets[originalAsset] = {rhrHandle, originalHandle};
-                labelOriginalFonts[rhr] = originalAsset;
-                LOGI("Created full RHR label font: original=%p replacement=%p", originalAsset, rhr);
+                // No original glyph fallback is attached to the full replacement asset.
+                targets[originalAsset] = {replacementHandle, originalHandle};
+                labelOriginalFonts[replacementFont] = originalAsset;
+                LOGI("Created full replacement label font: original=%p replacement=%p", originalAsset, replacementFont);
             }
-            if (forumBuffer) rhr = forumTitleFont(textObject, originalAsset, rhr, forumBuffer, forumCapacity);
-            if (!usingRhr) {
+            if (titleBuffer) replacementFont = constrainedTitleFont(textObject, originalAsset, replacementFont, titleBuffer, titleCapacity);
+            if (!usingReplacement) {
                 if (!gcHandleNewWeak) return;
                 auto previous = originalLabelStyles.find(instanceId);
                 if (previous == originalLabelStyles.end()) {
@@ -2990,7 +3107,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
             }
             // Continue through the existing atlas/style rebinding code below.
             // Use a local target; the shared replace-all fallback stays separate.
-            labelReplacement = rhr;
+            labelReplacement = replacementFont;
         }
     }
     void* cachedFallback = fallbackFontAssetHandle && gcHandleGetTarget
@@ -3055,6 +3172,11 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
             return;
         }
         void* sourceMaterial = runtimeInvoke(getSharedMaterial, textObject, nullptr, &exception);
+        if (!exception && storyRole != StoryFontRole::None &&
+            !unityObjectAlive(sourceMaterial) && unityObjectAlive(storySource)) {
+            sourceMaterial = storySource;
+            LOGI("Recovered ordinary-story source material after scene release: role=%d", static_cast<int>(storyRole));
+        }
         if (exception || !sourceMaterial) {
             LOGE("TMP source material unavailable");
             return;
@@ -3093,13 +3215,14 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         void* currentAtlas = materialTexture(sourceMaterial, "_MainTex");
         void* replacementAtlas = materialTexture(targetMaterial, "_MainTex");
         if (asset == fallback && currentAtlas && currentAtlas == replacementAtlas) {
+            refreshStoryMeshPadding(textObject, sourceMaterial, storyRole);
             void* localMaterial = rouletteOutlineMaterial(textObject,sourceMaterial);
             if (localMaterial != sourceMaterial) {
                 void* localArgs[] = {localMaterial};
                 runtimeInvoke(setSharedMaterial,textObject,localArgs,&exception);
                 if (exception) return;
             }
-            commitForumTitleFont(textObject, fallback);
+            commitConstrainedTitleFont(textObject, fallback);
             return;
         }
         if (asset == fallback) {
@@ -3109,7 +3232,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         }
         void* materialArgs[] = {sourceMaterial, targetMaterial};
         void* styledMaterial = runtimeInvoke(getStyledMaterial, nullptr, materialArgs, &exception);
-        if (exception || !styledMaterial) {
+        if (exception || !unityObjectAlive(styledMaterial)) {
             // GetFallbackMaterial can return null when a scene restores an old
             // material onto a TMP object whose font asset is already replaced.
             // Clone that exact material and bind the new atlas instead of
@@ -3124,7 +3247,14 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
             const bool textureBound = cloned && replacementAtlas &&
                 setMaterialTexture(styledMaterial, "_MainTex", replacementAtlas);
             const bool scaleRead = textureBound && materialFloat(targetMaterial, "_GradientScale", newScale);
-            const bool scaleBound = scaleRead && setMaterialFloat(styledMaterial, "_GradientScale", newScale);
+            bool scaleBound = scaleRead && setMaterialFloat(styledMaterial, "_GradientScale", newScale);
+            // Match TMP's fallback material factory: atlas dimensions and
+            // weight metrics belong to the replacement font as well.
+            for (const char* property : {"_TextureWidth", "_TextureHeight", "_WeightNormal", "_WeightBold"}) {
+                float value = 0;
+                scaleBound = scaleBound && materialFloat(targetMaterial, property, value) &&
+                    setMaterialFloat(styledMaterial, property, value);
+            }
             if (!scaleBound) {
                 static int reports = 0;
                 if (reports++ < 24) {
@@ -3147,7 +3277,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                 LOGI("Rebound TMP material to replacement atlas manually");
         }
         float sourceScale, targetScale, outlineWidth;
-        if (materialFloat(sourceMaterial, "_GradientScale", sourceScale) &&
+        if (storyRole == StoryFontRole::None && materialFloat(sourceMaterial, "_GradientScale", sourceScale) &&
             materialFloat(targetMaterial, "_GradientScale", targetScale) &&
             materialFloat(sourceMaterial, "_OutlineWidth", outlineWidth) &&
             sourceScale > 0.0f && targetScale > 0.0f && outlineWidth > 0.0f) {
@@ -3178,38 +3308,11 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         }
         void* assignedMaterial = styledMaterial;
         if (replacesCjk()) {
-            static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
-            static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
-            void* labelException = nullptr;
-            auto* label = getName ? static_cast<Il2CppString*>(runtimeInvoke(getName, textObject, nullptr, &labelException)) : nullptr;
-            void* sizeBox = getSize ? runtimeInvoke(getSize, textObject, nullptr, &labelException) : nullptr;
-            const float size = sizeBox && objectUnbox ? *static_cast<float*>(objectUnbox(sizeBox)) : 0.0f;
-            float originalWidth = 0.0f;
-            if (!labelException && materialFloat(sourceMaterial, "_OutlineWidth", originalWidth)) {
-                const std::string labelName = utf8(label);
-                const float subtitleSize = labelName == "Message Label"
-                    ? knownFontValue(textObject, "story_subtitle_size", size) : size;
-                const float subtitleWidth = labelName == "Message Label"
-                    ? knownFontValue(textObject, "story_subtitle_outline", originalWidth) : originalWidth;
-                const bool subtitle = labelName == "Message Label" &&
-                    subtitleSize >= 50.0f && subtitleSize <= 58.0f &&
-                    subtitleWidth >= 0.30f && subtitleWidth <= 0.40f;
-                const bool speakerName = labelName == "Name Label" &&
-                    size >= 30.0f && size <= 34.0f &&
-                    originalWidth >= 0.45f && originalWidth <= 0.55f;
-                if (subtitle || speakerName) {
-                    const StoryStyle style = subtitle ? StoryStyle::Subtitle :
-                        StoryStyle::SpeakerName;
-                    void* isolated = storyMaterial(styledMaterial, style);
-                    if (isolated) {
-                        assignedMaterial = isolated;
-                        if (subtitle) {
-                            originalFontValue(textObject, "story_subtitle_size", size);
-                            originalFontValue(textObject, "story_subtitle_outline", originalWidth);
-                        }
-                    }
-                    else LOGE("Cannot isolate story material");
-                }
+            if (storyRole == StoryFontRole::None) storyRole = ordinaryStoryRole(textObject, sourceMaterial);
+            if (storyRole != StoryFontRole::None) {
+                void* isolated = storyMaterial(styledMaterial, storyRole, storySource);
+                if (isolated) assignedMaterial = isolated;
+                else LOGE("Cannot isolate story material");
             }
         }
         assignedMaterial = rouletteOutlineMaterial(textObject,assignedMaterial);
@@ -3219,7 +3322,11 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
         void* styleArgs[] = {assignedMaterial};
         runtimeInvoke(setSharedMaterial, textObject, styleArgs, &exception);
         if (exception) { LOGE("TMP_Text.set_fontSharedMaterial failed"); return; }
-        commitForumTitleFont(textObject, fallback);
+        if (storyRole != StoryFontRole::None) {
+            if (auto* baseline = fontBaseline(textObject)) baseline->storyOutlineGeneration = 0;
+            refreshStoryMeshPadding(textObject, assignedMaterial, storyRole);
+        }
+        commitConstrainedTitleFont(textObject, fallback);
         static int reportedFontUpdates = 0;
         if (reportedFontUpdates++ < 24)
             LOGI("Replaced TMP font while preserving material style");
@@ -3239,96 +3346,10 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
     LOGI("Attached CJK fallback to TMP font asset");
 }
 
-void routeTmpFontAfterSetter(void* textObject, Il2CppString* rendered) {
+void routeTmpFontAfterSetter(void* textObject) {
     if (!fontEnabled || !usesIndependentFontRouting() || !textObject) return;
-    // 3D TMP does not receive TextMeshProUGUI.OnPreRenderCanvas. The setter's
-    // completed value is the authoritative classification for every TMP type.
-    const std::string text = utf8(rendered);
-    const bool target = text.find("开始") != std::string::npos || text.find("開始") != std::string::npos;
-    static int reported = 0;
-    const bool logTarget = target && reported++ < 16;
-    const auto report = [&](const char* stage) {
-        static const auto getFont = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font", 0);
-        static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
-        void* error = nullptr;
-        void* font = getFont ? runtimeInvoke(getFont, textObject, nullptr, &error) : nullptr;
-        auto* name = !error && font && getName
-            ? static_cast<Il2CppString*>(runtimeInvoke(getName, font, nullptr, &error)) : nullptr;
-        void* klass = objectGetClass ? objectGetClass(textObject) : nullptr;
-        const char* type = klass && classGetName ? classGetName(klass) : "?";
-        const std::string path = textObjectPath(textObject);
-        LOGI("TMP start label font route: stage=%s path=%s type=%s ui=%d font=%s",
-             stage, path.c_str(), type ? type : "?", isTmpUi(textObject), error ? "?" : utf8(name).c_str());
-    };
-    if (logTarget) report("before-route");
     updateFont(textObject);
     applyStorySubtitleLayout(textObject);
-    if (logTarget) report("after-route");
-}
-
-void diagnosePickerGeometry() {
-    if (!pickerDiagnosticWeak || !gcHandleGetTarget || !runtimeInvoke || !objectUnbox) return;
-    void* self = gcHandleGetTarget(pickerDiagnosticWeak);
-    if (!self) {
-        if (gcHandleFree) gcHandleFree(pickerDiagnosticWeak);
-        pickerDiagnosticWeak = 0;
-        return;
-    }
-    if (pickerDiagnosticPasses >= 3) return;
-    ++pickerDiagnosticPasses;
-    nlohmann::json info = {{"pass", pickerDiagnosticPasses}};
-    const auto invoke = [&](const char* assembly, const char* ns, const char* type, const char* method, void* object) -> void* {
-        const auto candidate = methodInfo(assembly, ns, type, method, 0);
-        void* error = nullptr;
-        void* result = candidate ? runtimeInvoke(candidate, object, nullptr, &error) : nullptr;
-        return error ? nullptr : result;
-    };
-    void* font = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font", self);
-    const auto face = [&](void* fontAsset) {
-        nlohmann::json result = nlohmann::json::object();
-        if (!fontAsset) return result;
-        void* boxed = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_FontAsset", "get_faceInfo", fontAsset);
-        void* klass = boxed && objectGetClass ? objectGetClass(boxed) : nullptr;
-        if (!klass || !classGetFieldFromName || !fieldGetValue) return result;
-        const char* fields[] = {"m_Scale", "m_LineHeight", "m_AscentLine", "m_CapLine", "m_MeanLine", "m_Baseline", "m_DescentLine"};
-        for (const char* name : fields) {
-            void* field = classGetFieldFromName(klass, name);
-            float value = 0.0f;
-            if (field) { fieldGetValue(boxed, field, &value); result[name] = value; }
-        }
-        void* pointField = classGetFieldFromName(klass, "m_PointSize");
-        int32_t point = 0;
-        if (pointField) { fieldGetValue(boxed, pointField, &point); result["m_PointSize"] = point; }
-        return result;
-    };
-    info["face"] = face(font);
-    const auto original = labelOriginalFonts.find(font);
-    if (original != labelOriginalFonts.end()) info["original_face"] = face(original->second);
-    void* overflow = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_overflowMode", self);
-    if (overflow) info["overflow_mode"] = *static_cast<int32_t*>(objectUnbox(overflow));
-    void* size = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", self);
-    if (size) info["font_size"] = *static_cast<float*>(objectUnbox(size));
-    void* color = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_color", self);
-    if (color) info["alpha"] = static_cast<float*>(objectUnbox(color))[3];
-    void* bounds = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_textBounds", self);
-    if (bounds) {
-        auto* v = static_cast<float*>(objectUnbox(bounds));
-        info["text_bounds_center"] = {v[0], v[1], v[2]};
-        info["text_bounds_extents"] = {v[3], v[4], v[5]};
-    }
-    void* transform = invoke("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform", self);
-    void* rect = transform ? invoke("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect", transform) : nullptr;
-    if (rect) { auto* v = static_cast<float*>(objectUnbox(rect)); info["rect"] = {v[0],v[1],v[2],v[3]}; }
-    void* renderer = invoke("UnityEngine.UI.dll", "UnityEngine.UI", "Graphic", "get_canvasRenderer", self);
-    void* rendererAlpha = renderer ? invoke("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "GetAlpha", renderer) : nullptr;
-    if (rendererAlpha) info["canvas_renderer_alpha"] = *static_cast<float*>(objectUnbox(rendererAlpha));
-    void* cull = renderer ? invoke("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "get_cull", renderer) : nullptr;
-    if (cull) info["canvas_cull"] = *static_cast<bool*>(objectUnbox(cull));
-    void* clipping = renderer ? invoke("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "get_hasRectClipping", renderer) : nullptr;
-    if (clipping) info["rect_clipping"] = *static_cast<bool*>(objectUnbox(clipping));
-    // This diagnostic was scheduled only by the exact four-character buffer;
-    // its output contains numeric geometry/metrics, never label or player text.
-    LOGI("Message picker geometry: %s", info.dump().c_str());
 }
 
 void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
@@ -3339,101 +3360,40 @@ void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
     const size_t count = *reinterpret_cast<size_t*>(data + 24);
     if (count > 65536) return;
     const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(data + 32);
-    const bool numericCount = ui_font_policy::isNumericBuffer(chars, count);
+    const bool numericSymbols = ui_font_policy::isNumericSymbolBuffer(chars, count);
     if (fontMode == FontMode::ReplaceUi && isTmpUi(self)) {
         if (auto* baseline = fontBaseline(self)) {
             baseline->glyphFontRouteKnown = true;
-            baseline->glyphNumericCount = numericCount;
+            baseline->glyphNumericSymbols = numericSymbols;
         }
     }
-    const bool useRhr = fontMode == FontMode::ReplaceUi
-        ? ui_font_policy::usesReplacement(uiFontPolicyPath(self), numericCount)
+    const bool useReplacement = fontMode == FontMode::ReplaceUi
+        ? ui_font_policy::usesReplacement(uiFontPolicyPath(self), numericSymbols)
         : (mixed_font_router::hasCjkBuffer(chars, count) ||
            (count >= 5 && (chars[0].unicode == '3' || chars[0].unicode == 'L') &&
-            panorama_font_labels::shouldUseRhr(textObjectPath(self), chars, count)) ||
+            panorama_font_labels::shouldUseReplacement(textObjectPath(self), chars, count)) ||
            (mixed_font_router::isKnownShowcaseBgmBuffer(chars, count) &&
             mixed_font_router::isShowcaseBgmHeader(textObjectPath(self))));
     const bool messagePicker = count >= 5 && chars[0].unicode == 0x9009 &&
         chars[1].unicode == 0x62e9 && chars[2].unicode == 0x6d88 &&
         chars[3].unicode == 0x606f && chars[4].unicode == 0;
-    static int messageReports = 0;
-    const bool logMessage = messagePicker && messageReports++ < 12;
-    if (messagePicker && gcHandleNewWeak && gcHandleGetTarget && gcHandleFree &&
-        (!pickerDiagnosticWeak || gcHandleGetTarget(pickerDiagnosticWeak) != self)) {
-        if (pickerDiagnosticWeak) gcHandleFree(pickerDiagnosticWeak);
-        pickerDiagnosticWeak = gcHandleNewWeak(self, false);
-        pickerDiagnosticPasses = 0;
-    }
-    static int reported = 0;
-    bool logTarget = false;
-    if (reported < 16 && runtimeInvoke) {
-        static const auto getObjectName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
-        void* error = nullptr;
-        auto* name = getObjectName
-            ? static_cast<Il2CppString*>(runtimeInvoke(getObjectName, self, nullptr, &error)) : nullptr;
-        if (!error && utf8(name) == "LabelText") {
-            const std::string path = textObjectPath(self);
-            logTarget = path.find("/League/StartTimeLabelRoot/LabelText") != std::string::npos;
-            if (logTarget) ++reported;
-        }
-    }
-    const auto report = [&](const char* stage) {
-        static const auto getText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_text", 0);
-        static const auto getFont = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font", 0);
-        static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
-        void* error = nullptr;
-        auto* text = getText ? static_cast<Il2CppString*>(runtimeInvoke(getText, self, nullptr, &error)) : nullptr;
-        const bool getterCjk = !error && text && text->length > 0 &&
-            mixed_font_router::hasCjk(text->chars, static_cast<size_t>(text->length));
-        const int32_t getterLength = !error && text ? text->length : -1;
-        error = nullptr;
-        void* font = getFont ? runtimeInvoke(getFont, self, nullptr, &error) : nullptr;
-        auto* name = !error && font && getName
-            ? static_cast<Il2CppString*>(runtimeInvoke(getName, font, nullptr, &error)) : nullptr;
-        LOGI("League glyph lookup font route: stage=%s getter_cjk=%d getter_length=%d use_replacement=%d buffer_capacity=%zu font=%s",
-             stage, getterCjk, getterLength, useRhr, count, error ? "?" : utf8(name).c_str());
-    };
-    const auto reportMessage = [&](const char* stage) {
-        static const auto getFont = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font", 0);
-        static const auto getMaterial = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSharedMaterial", 0);
-        static const auto getId = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "GetInstanceID", 0);
-        static void* maskClass = findClass("UnityEngine.UI.dll", "UnityEngine.UI", "MaskableGraphic");
-        static void* maskField = maskClass && classGetFieldFromName
-            ? classGetFieldFromName(maskClass, "m_MaskMaterial") : nullptr;
-        void* error = nullptr;
-        void* font = getFont ? runtimeInvoke(getFont, self, nullptr, &error) : nullptr;
-        error = nullptr;
-        void* shared = getMaterial ? runtimeInvoke(getMaterial, self, nullptr, &error) : nullptr;
-        void* mask = nullptr;
-        if (maskField && fieldGetValue) fieldGetValue(self, maskField, &mask);
-        void* sharedAtlas = shared ? materialTexture(shared, "_MainTex") : nullptr;
-        void* maskAtlas = mask ? materialTexture(mask, "_MainTex") : nullptr;
-        const auto id = [&](void* object) -> int32_t {
-            if (!object || !getId || !objectUnbox) return 0;
-            void* exception = nullptr;
-            void* box = runtimeInvoke(getId, object, nullptr, &exception);
-            return !exception && box ? *static_cast<int32_t*>(objectUnbox(box)) : 0;
-        };
-        LOGI("Message picker glyph font route: stage=%s font_id=%d shared_atlas_id=%d cached_mask_atlas_id=%d cached_mask_present=%d atlas_equal=%d",
-             stage, id(font), id(sharedAtlas), id(maskAtlas), mask != nullptr,
-             sharedAtlas && sharedAtlas == maskAtlas);
-    };
-    if (logMessage) reportMessage("before");
-    if (logTarget) report("before");
     // Switch before SetArraySizes chooses glyphs, materials and UV references.
     // The original method below rebuilds them coherently from the chosen font.
-    bool forumTitle = false;
+    bool constrainedTitle = false;
     if (!messagePicker) {
         static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
         void* error = nullptr;
         auto* name = getName ? static_cast<Il2CppString*>(runtimeInvoke(getName, self, nullptr, &error)) : nullptr;
-        forumTitle = !error && utf8(name) == "Title";
+        const auto objectName = error ? std::string() : utf8(name);
+        constrainedTitle = constrainedTitleCandidateName(objectName) &&
+            ::constrainedTitle(textObjectPath(self)) != ConstrainedTitle::None;
     }
     const bool trackSubmit = usesIndependentFontRouting() && isTmpUi(self);
     void* beforeFont = trackSubmit ? readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_font") : nullptr;
     void* beforeMaterial = trackSubmit ? readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_fontSharedMaterial") : nullptr;
-    updateFont(self, false, &useRhr, messagePicker, forumTitle ? chars : nullptr, forumTitle ? count : 0);
+    updateFont(self, false, &useReplacement, messagePicker, constrainedTitle ? chars : nullptr, constrainedTitle ? count : 0);
     applyStorySubtitleLayout(self);
+    applyPortraitNameLayout(self);
     if (trackSubmit) {
         void* afterFont = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_font");
         void* afterMaterial = readFontProperty(self,"Unity.TextMeshPro.dll","TMPro","TMP_Text","get_fontSharedMaterial");
@@ -3441,19 +3401,13 @@ void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
             if (auto* baseline = fontBaseline(self)) baseline->pendingRendererSubmit = true;
         }
     }
-    if (logTarget) report("after");
-    if (logMessage) reportMessage("after");
 }
-void* prepareLoveEpisodeGlyphs(void* self, void* array) {
+// SetText rebuilds the processing array even when the stale string getter
+// already equals desired. Formatted setters bypass set_text in these prefabs.
+void* rebuildTmpGlyphBuffer(void* self, void* array, const std::string& desired, bool* applied = nullptr) {
     static thread_local bool updating = false;
-    if (updating || !self || !array || !runtimeInvoke || !fieldGetValue ||
+    if (updating || desired.empty() || !self || !array || !runtimeInvoke || !fieldGetValue ||
         !classGetFieldFromName || !stringNew) return array;
-    const auto* input = static_cast<const Il2CppByteArray*>(array);
-    if (input->length > 65536) return array;
-    const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(input->data);
-    const auto number = love_episode_label::numberBuffer(input->length,
-        [&](size_t i) { return chars[i].unicode; });
-    if (!number || textObjectPath(self) != love_episode_label::path) return array;
     static void* klass = findClass("Unity.TextMeshPro.dll", "TMPro", "TMP_Text");
     static void* processingField = klass ? classGetFieldFromName(klass, "m_TextProcessingArray") : nullptr;
     static const auto setText = []() -> const MethodInfoHead* {
@@ -3476,15 +3430,12 @@ void* prepareLoveEpisodeGlyphs(void* self, void* array) {
     }();
     if (!processingField || !setText) {
         static int reports = 0;
-        if (reports++ < 4) LOGE("Love episode buffer API unavailable: field=%d setter=%d", processingField != nullptr, setText != nullptr);
+        if (reports++ < 4) LOGE("Formatted UI buffer API unavailable: field=%d setter=%d", processingField != nullptr, setText != nullptr);
         return array;
     }
-    const auto desired = love_episode_label::format(love_episode_label::path, *number);
-    auto* replacement = desired ? stringNew(desired->c_str()) : nullptr;
+    auto* replacement = stringNew(desired.c_str());
     if (!replacement) return array;
     updating = true;
-    // SetText rebuilds the backing/processing arrays even if m_text already
-    // equals this string. set_text alone can short-circuit on that equality.
     bool sync = true;
     void* args[] = {replacement, &sync};
     void* error = nullptr;
@@ -3498,26 +3449,67 @@ void* prepareLoveEpisodeGlyphs(void* self, void* array) {
         result->length <= 65536;
     for (int32_t i = 0; complete && i <= replacement->length; ++i)
         complete = output[i].unicode == (i == replacement->length ? 0 : replacement->chars[i]);
-    if (!complete) {
-        LOGE("Cannot rebuild Love episode glyph buffer");
-        return array;
+    if (!complete) { LOGE("Cannot rebuild formatted UI glyph buffer"); return array; }
+    if (applied) *applied = true;
+    return updated;
+}
+
+void* prepareLoveEpisodeGlyphs(void* self, void* array) {
+    if (!self || !array) return array;
+    const auto* input = static_cast<const Il2CppByteArray*>(array);
+    if (input->length > 65536) return array;
+    const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(input->data);
+    const auto number = love_episode_label::numberBuffer(input->length,
+        [&](size_t i) { return chars[i].unicode; });
+    if (!number || textObjectPath(self) != love_episode_label::path) return array;
+    const auto desired = love_episode_label::format(love_episode_label::path, *number);
+    return desired ? rebuildTmpGlyphBuffer(self, array, *desired) : array;
+}
+
+void* prepareFormattedUiGlyphs(void* self, void* array) {
+    if (!self || !array || !runtimeInvoke) return array;
+    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    const auto* input = static_cast<const Il2CppByteArray*>(array);
+    if (input->length == 0 || input->length > 65536) return array;
+    const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(input->data);
+    std::u16string decoded;
+    size_t i = 0;
+    for (; i < input->length && i < 256 && chars[i].unicode; ++i) {
+        const auto c = static_cast<uint32_t>(chars[i].unicode);
+        // These reviewed short UI labels contain BMP characters only.
+        if (c > 0xffff || (c >= 0xd800 && c <= 0xdfff)) return array;
+        decoded.push_back(static_cast<char16_t>(c));
     }
-    static int reports = 0;
-    if (reports++ < 8) LOGI("Restored complete Love episode glyph label: episode=%s", number->c_str());
+    if (i >= input->length || i >= 256 || decoded.empty()) return array;
+    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
+    const auto text = converter.to_bytes(decoded);
+    const bool medal = !guild_medal_font::decorate(text, "probe").empty();
+    const bool activity = homeActivityNames.mayMatch(text);
+    if (!medal && !activity) return array;
+    const auto path = textObjectPath(self);
+    std::string desired;
+    if (medal && path == guild_medal_font::path) desired = guildMedalRenderedText(self, text);
+    else if (activity) desired = homeActivityNames.translate(text, path);
+    if (desired.empty() || desired == text) return array;
+    bool applied = false;
+    void* updated = rebuildTmpGlyphBuffer(self, array, desired, &applied);
+    if (applied) {
+        static int reports = 0;
+        if (reports++ < 16) LOGI("Formatted UI glyph buffer repaired: kind=%s", medal ? "guild-medal" : "activity-name");
+    }
     return updated;
 }
 
 int32_t hookTmpUiSetArraySizes(void* self, void* array, void* method) {
     array = prepareLoveEpisodeGlyphs(self, array);
+    array = prepareFormattedUiGlyphs(self, array);
     routeTmpFontBeforeGlyphLookup(self, array);
     const int32_t result = origTmpUiSetArraySizes(self, array, method);
-    diagnoseHomeTalkGlyph(self, "post_array_sizes");
     return result;
 }
 int32_t hookTmp3dSetArraySizes(void* self, void* array, void* method) {
     routeTmpFontBeforeGlyphLookup(self, array);
     const int32_t result = origTmp3dSetArraySizes(self, array, method);
-    diagnoseHomeTalkGlyph(self, "post_array_sizes_3d");
     return result;
 }
 
@@ -3622,6 +3614,9 @@ void installTextHooks() {
     installed += installMethod("TextMeshProUGUI.OnPreRenderCanvas",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TextMeshProUGUI", "OnPreRenderCanvas", 0),
         reinterpret_cast<void*>(hookTmpPreRender), origTmpPreRender);
+    installed += installMethod("Qua.UI.FitToChild.SetLayout",
+        methodPointer("quaunity-ui.Runtime.dll", "Qua.UI", "FitToChild", "SetLayout", 1),
+        reinterpret_cast<void*>(hookActivityFitToChildLayout), origFitToChildLayout);
     const auto* canvasWillRender = methodInfo("UnityEngine.UIModule.dll", "UnityEngine",
         "Canvas", "SendWillRenderCanvases", 0);
     bool validCanvasWillRender = false;
@@ -3637,41 +3632,6 @@ void installTextHooks() {
     installed += installMethod("UnityEngine.Canvas.SendWillRenderCanvases",
         validCanvasWillRender ? canvasWillRender->methodPointer : nullptr,
         reinterpret_cast<void*>(hookCanvasWillRender), origCanvasWillRender);
-    // Observe the game's own badge decision without changing viewed state.
-    // Signature-check both instance and static variants before installing.
-    const auto* marketNotify = methodInfo("Assembly-CSharp.dll", "Solis.OutGame",
-        "ShopNotiManager", "IsMarketNotify", 0);
-    if (marketNotify && methodGetFlags && methodGetParamCount && methodGetReturnType &&
-        typeGetName && il2cppFree && methodGetParamCount(marketNotify) == 0) {
-        char* resultType = typeGetName(methodGetReturnType(marketNotify));
-        const bool booleanResult = resultType && std::strcmp(resultType, "System.Boolean") == 0;
-        if (resultType) il2cppFree(resultType);
-        uint32_t implementationFlags = 0;
-        if (booleanResult) {
-            const bool isStatic = (methodGetFlags(marketNotify, &implementationFlags) & 0x0010u) != 0;
-            if (isStatic) {
-                static bool (*original)(void*) = nullptr;
-                auto observer = +[](void* method) -> bool {
-                    const bool result = original(method);
-                    static std::atomic<unsigned> count{0};
-                    if (count.fetch_add(1) < 8) LOGI("Shop badge: game IsMarketNotify=%d", result);
-                    return result;
-                };
-                installMethod("ShopNotiManager.IsMarketNotify(observer)", marketNotify->methodPointer,
-                    reinterpret_cast<void*>(observer), original);
-            } else {
-                static bool (*original)(void*, void*) = nullptr;
-                auto observer = +[](void* self, void* method) -> bool {
-                    const bool result = original(self, method);
-                    static std::atomic<unsigned> count{0};
-                    if (count.fetch_add(1) < 8) LOGI("Shop badge: game IsMarketNotify=%d", result);
-                    return result;
-                };
-                installMethod("ShopNotiManager.IsMarketNotify(observer)", marketNotify->methodPointer,
-                    reinterpret_cast<void*>(observer), original);
-            }
-        }
-    }
     installed += installMethod("TMP_Text.SetText(string)",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "SetText", 1),
         reinterpret_cast<void*>(hookTmpSetTextOne), origTmpSetTextOne);

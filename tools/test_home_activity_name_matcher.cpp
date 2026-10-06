@@ -45,4 +45,19 @@ int main() {
     assert(!bounded.add("another", "另外"));
     NumericTextTemplateMatcher global;
     assert(!global.add("出演 Lv{number}", "出演 Lv{number}")); // Global guard stays intact.
+    assert(matcher.add("休暇", "休假"));
+    assert(matcher.add("休息", "休息"));
+    for (const std::string screen : {"FanEvent", "Promotion", "Refresh"}) {
+        const auto footer = "WindowSystem/WindowRoot/ActivityWindow(Clone)/" + screen +
+            "Screen(Clone)/ScreenCanvas/ScreenRoot/ActGameFooter/ActGameInfo/Level";
+        assert(matcher.translate("休暇 Lv4", footer) == "休假 Lv4");
+        assert(matcher.translate("休暇 Lv004", footer) == "休假 Lv004");
+        assert(matcher.translate("休息 Lv2", footer) == "休息 Lv2");
+        assert(matcher.isRendered("休假 Lv4", footer));
+        assert(matcher.translate("休假 Lv4", footer).empty());
+        assert(matcher.translate("休暇 Lv4", "Other/" + footer).empty());
+        assert(matcher.translate("休暇 Lv4", footer + "/Child").empty());
+        assert(matcher.translate("玩家 Lv4", footer).empty());
+        assert(matcher.translate("休暇 Lv4\n", footer).empty());
+    }
 }

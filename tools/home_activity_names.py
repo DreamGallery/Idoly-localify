@@ -1,10 +1,13 @@
-"""Reviewed names for three exact home work labels; levels remain runtime values."""
+"""Reviewed names for home and in-work footer labels; levels remain runtime values."""
 import re
 
 PATH_PREFIX = ('WindowSystem/WindowRoot/HomeWindow(Clone)/HomeTopScreen(Clone)/'
                'ScreenCanvas/ScreenRoot/ActivityPage/SlideRoot/Parent/ActivityCells/')
 PATHS = frozenset(PATH_PREFIX + slot + '/NameBase/Name'
                   for slot in ('FanEvent', 'Promotion', 'Refresh'))
+PATHS |= frozenset('WindowSystem/WindowRoot/ActivityWindow(Clone)/' + screen +
+                   'Screen(Clone)/ScreenCanvas/ScreenRoot/ActGameFooter/ActGameInfo/Level'
+                   for screen in ('FanEvent', 'Promotion', 'Refresh'))
 LEVEL_LABEL = re.compile(r'(.+) Lv([0-9]{1,6})\Z', re.ASCII)
 
 

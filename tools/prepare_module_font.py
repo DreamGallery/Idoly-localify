@@ -57,12 +57,23 @@ def resolve_font(spec, cache, font_path=None):
         data = cached.read_bytes()
         verify_font(data, spec)
         return data
-    if not spec['url'].startswith('https://raw.githubusercontent.com/notofonts/noto-cjk/'):
-        raise ValueError('Expected an official Noto HTTPS source')
-    with urllib.request.urlopen(spec['url'], timeout=120) as response:
-        data = response.read(MAX_FONT_BYTES + 1)
+    source = spec.get('source', spec)
+    source_cache = cache / (source['sha256'] + '.otf')
+    if 'instance' in spec and source_cache.is_file():
+        data = source_cache.read_bytes()
+    else:
+        if not source['url'].startswith('https://raw.githubusercontent.com/notofonts/noto-cjk/'):
+            raise ValueError('Expected an official Noto HTTPS source')
+        with urllib.request.urlopen(source['url'], timeout=120) as response:
+            data = response.read(MAX_FONT_BYTES + 1)
     if len(data) > MAX_FONT_BYTES:
         raise ValueError('Default font download exceeds size limit')
+    if hashlib.sha256(data).hexdigest() != source['sha256']:
+        raise ValueError('Font source SHA-256 mismatch')
+    if 'instance' in spec:
+        from instantiate_noto import instantiate_font
+        atomic_write(source_cache, data)
+        data = instantiate_font(data, spec)
     verify_font(data, spec)
     atomic_write(cached, data)
     return data
@@ -108,8 +119,10 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--font', type=Path, help='Use the pinned font from a local file, without downloading')
     parser.add_argument('--cache', type=Path)
+    parser.add_argument('--config', type=Path, help='Alternate pinned font specification for a local comparison build')
     args = parser.parse_args()
-    print(json.dumps(prepare(args.template, args.output, cache=args.cache, font_path=args.font), indent=2))
+    print(json.dumps(prepare(args.template, args.output, cache=args.cache, font_path=args.font,
+                             config=args.config), indent=2))
 
 
 if __name__ == '__main__':

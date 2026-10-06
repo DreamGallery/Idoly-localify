@@ -3,9 +3,9 @@ import struct
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from build_ui_label_images import mesh_mask, render_label, validate_rectangle_image
+from build_ui_label_images import fill_enclosed_transparency, mesh_mask, render_label, restore_solid_label_background, validate_rectangle_image
 
 
 class LabelMeshTests(unittest.TestCase):
@@ -52,6 +52,36 @@ class LabelMeshTests(unittest.TestCase):
         args = (Path('unused.ttf'), [255] * 4, [255] * 4, Image.new('L', (20, 10), 255))
         with self.assertRaisesRegex(ValueError, 'nonempty text'):
             render_label((20, 10), {'text': ''}, *args)
+
+    def test_closed_counter_filled_but_open_counter_and_outer_alpha_preserved(self):
+        image = Image.new('RGBA', (20, 10))
+        draw = ImageDraw.Draw(image)
+        pink = (255, 109, 133, 255)
+        draw.rectangle((2, 2, 7, 7), outline=pink)
+        draw.rectangle((12, 2, 17, 7), outline=pink)
+        image.putpixel((14, 2), (0, 0, 0, 0))  # Open shape must stay transparent.
+        result = fill_enclosed_transparency(image, [255, 255, 255, 255])
+        for y in range(10):
+            for x in range(20):
+                expected = (255, 255, 255, 255) if 2 < x < 7 and 2 < y < 7 else image.getpixel((x, y))
+                self.assertEqual(result.getpixel((x, y)), expected)
+
+    def test_solid_background_repair_preserves_outer_edges_and_alpha(self):
+        background = [64, 204, 255, 255]
+        image = Image.new('RGBA', (7, 3), (101, 101, 168, 0))
+        image.putpixel((0, 1), (90, 140, 190, 180))
+        image.putpixel((6, 1), (90, 140, 190, 180))
+        image.putpixel((1, 1), tuple(background))
+        image.putpixel((5, 1), tuple(background))
+        for x in range(2, 5):
+            image.putpixel((x, 1), (255, 255, 255, 255))
+        result = restore_solid_label_background(image, background, 8)
+        for y in range(3):
+            for x in range(7):
+                expected = tuple(background) if y == 1 and 1 <= x <= 5 else image.getpixel((x, y))
+                self.assertEqual(result.getpixel((x, y)), expected)
+        with self.assertRaisesRegex(ValueError, 'Unreviewed'):
+            restore_solid_label_background(image, background, 30)
 
 
 if __name__ == '__main__':

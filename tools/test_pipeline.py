@@ -111,6 +111,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_build_verify_and_incremental_rebuild(self):
         first = self.pipeline.run()
+        self.assertIs(json.loads(self.pipeline.dictionary.read_text())["dump"], False)
         self.assertEqual(first["rebuilt"], 1)
         self.assertEqual(first["master_keyed_fields"], 1)
         self.assertEqual(json.loads(self.pipeline.master_keyed.read_text(

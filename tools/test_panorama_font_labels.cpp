@@ -10,21 +10,35 @@ int main() {
     const std::string root(labelRoot);
     const UnicodeChar degrees[] = {{'3',0,1},{'6',1,1},{'0',2,1},{0xb0,3,1},{0,4,0}};
     const UnicodeChar live[] = {{'L',0,1},{'I',1,1},{'V',2,1},{'E',3,1},{0,4,0}};
-    assert(shouldUseRhr(root + "360", degrees, 5));
-    assert(shouldUseRhr(root + "LIVE", live, 5));
-    assert(!shouldUseRhr(root + "360", live, 5));
-    assert(!shouldUseRhr(root + "LIVE", degrees, 5));
-    assert(!shouldUseRhr(root + "LIVE/Child", live, 5));
-    assert(!shouldUseRhr("Other/" + root + "LIVE", live, 5));
-    assert(!shouldUseRhr("LIVE", live, 5));
-    assert(!shouldUseRhr(root + "LIVE", static_cast<const UnicodeChar*>(nullptr), 5));
-    assert(!shouldUseRhr(root + "LIVE", live, 0));
-    assert(!shouldUseRhr(root + "LIVE", live, 4));
-    assert(!shouldUseRhr(root + "LIVE", live, 65537));
+    assert(shouldUseReplacement(root + "360", degrees, 5));
+    assert(shouldUseReplacement(root + "LIVE", live, 5));
+    const std::string music(musicTitleRoot);
+    assert(shouldUseReplacement(music + "360", degrees, 5));
+    assert(shouldUseReplacement(music + "LIVE", live, 5));
+    assert(!shouldUseReplacement(music + "LIVE/Child", live, 5));
+    assert(!shouldUseReplacement("Other/" + music + "LIVE", live, 5));
+    assert(labelLeaf(music + "Title").empty());
+    // The captured original -35 spacing put LIVE at x=93.05 while 360°
+    // occupied 128.05 units. Retain both 60-point widths and separate them.
+    const float gap = musicTitleGap(325.0f);
+    assert(std::fabs(gap - 6.5f) < 0.001f);
+    assert(128.05f + gap + 126.07f < 325.0f);
+    assert(musicTitleGap(0.0f) == 0.0f);
+    assert(musicTitleGap(-325.0f) == 0.0f);
+    assert(musicTitleGap(std::numeric_limits<float>::infinity()) == 0.0f);
+    assert(!shouldUseReplacement(root + "360", live, 5));
+    assert(!shouldUseReplacement(root + "LIVE", degrees, 5));
+    assert(!shouldUseReplacement(root + "LIVE/Child", live, 5));
+    assert(!shouldUseReplacement("Other/" + root + "LIVE", live, 5));
+    assert(!shouldUseReplacement("LIVE", live, 5));
+    assert(!shouldUseReplacement(root + "LIVE", static_cast<const UnicodeChar*>(nullptr), 5));
+    assert(!shouldUseReplacement(root + "LIVE", live, 0));
+    assert(!shouldUseReplacement(root + "LIVE", live, 4));
+    assert(!shouldUseReplacement(root + "LIVE", live, 65537));
     const UnicodeChar trailing[] = {{'L',0,1},{'I',1,1},{'V',2,1},{'E',3,1},{'!',4,1},{0,5,0}};
-    assert(!shouldUseRhr(root + "LIVE", trailing, 6));
+    assert(!shouldUseReplacement(root + "LIVE", trailing, 6));
     const UnicodeChar unterminated[] = {{'L',0,1},{'I',1,1},{'V',2,1},{'E',3,1},{' ',4,1}};
-    assert(!shouldUseRhr(root + "LIVE", unterminated, 5));
+    assert(!shouldUseReplacement(root + "LIVE", unterminated, 5));
     auto check = [](double parent, double left, double right) {
         auto l = centeredLayout(parent, left, right);
         assert(l.valid && l.scale > 0 && l.scale <= 1);

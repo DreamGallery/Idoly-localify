@@ -20,7 +20,7 @@ class BuildTextUpdateTests(unittest.TestCase):
         self.output = self.root / ".analysis/release"
         self.asset_dir = self.root / "app/src/main/assets/idoly-localify"
         self.asset_dir.mkdir(parents=True)
-        self.dictionary = {"dump": True, "font": True, "font_mode": "replace-all",
+        self.dictionary = {"dump": False, "font": True, "font_mode": "replace-all",
                            "i18n": {}, "i18n_by_source": {}, "text": {},
                            "translated_values": []}
         self.notice = {"host": "stat.game-idolypride.jp", "pages": {}}
@@ -71,6 +71,12 @@ class BuildTextUpdateTests(unittest.TestCase):
         with patch("master_blob_patches.verify_patches", side_effect=ValueError("stale blobs")):
             with self.assertRaisesRegex(ValueError, "stale blobs"):
                 self.build(include_master_blobs=True, master_tag=self.root / "tag.pb")
+
+    def test_automatic_capture_cannot_be_published(self):
+        self.dictionary["dump"] = True
+        self.write_asset("dict.json", self.dictionary)
+        with self.assertRaisesRegex(ValueError, "capture must be disabled"):
+            self.build()
 
     def test_notice_is_optional(self):
         (self.asset_dir / "web-notice.json").unlink()

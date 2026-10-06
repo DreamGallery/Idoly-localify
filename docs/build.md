@@ -6,7 +6,7 @@
 
 推荐在已 root 的 Android 上，通过兼容系统版本的 LSPosed 或 Vector 启用独立模块，作用域只选 `game.qualiarts.idolypride`。游戏可使用未修补原版 APK；中文字体由模块内置 AssetBundle 提供，图片保留原版。LSPatch 也可仅嵌入模块，不再将字体写进游戏资源。不要让同一游戏进程同时使用 LSPatch 内嵌模块和系统框架重复加载。
 
-模块在原生钩子安装前，将内置字体按 SHA-256 校验后原子安装到游戏私有外部目录 `files/idoly-localify/resource-han-rounded.bundle`。模块升级或文件损坏时自动替换，失败则保留之前完整文件。此二进制不使用用户词典的保留修改规则。运行时优先使用模块字体；缺少模块字体时兼容旧 `add-font` 测试 APK 内已有的独立字体，并在日志中提示。
+模块在原生钩子安装前，将内置字体按 SHA-256 校验后原子安装到游戏私有外部目录 `files/idoly-localify/resource-han-rounded.bundle`。模块升级或文件损坏时自动替换，失败则保留之前完整文件。此二进制不使用用户词典的保留修改规则。运行时从模块字体包加载；暂时加载失败时保留原字体并重试。
 
 ## 准备文件
 
@@ -20,7 +20,15 @@ python3 tools/build_test_apks.py --preflight-only \
   --split .analysis/apk/split_config.arm64_v8a.apk
 ```
 
-从 [Noto 官方固定版本](https://github.com/notofonts/noto-cjk/blob/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf) 下载 `NotoSansCJKsc-Bold.otf`，保存到 `.analysis/fonts/`。默认版本、字重和 SHA-256 记录在 `config/font-source.json`；使用原始完整字体，不单独改写标点轮廓。许可证随模块放在 `assets/licenses/NotoSansCJK-OFL.txt`。将 [LSPatch CLI](https://github.com/JingMatrix/LSPatch/releases) 的 JAR 保存为 `.analysis/tools/lspatch.jar`。
+从 [Noto 官方固定版本](https://github.com/notofonts/noto-cjk/blob/Sans2.004/Sans/Variable/OTF/NotoSansCJKsc-VF.otf) 下载 `NotoSansCJKsc-VF.otf`，保存到 `.analysis/fonts/`，再生成静态 SemiBold：
+
+```sh
+python3 tools/instantiate_noto.py \
+  .analysis/fonts/NotoSansCJKsc-VF.otf \
+  .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf
+```
+
+`config/font-source.json` 固定源文件、600 字重及输出 SHA-256；使用 `requirements-font.txt` 中的固定依赖版本，保留完整字库，不单独改写标点轮廓。许可证随模块放在 `assets/licenses/NotoSansCJK-OFL.txt`。将 [LSPatch CLI](https://github.com/JingMatrix/LSPatch/releases) 的 JAR 保存为 `.analysis/tools/lspatch.jar`。
 
 ## 准备模块字体
 
@@ -29,7 +37,7 @@ python3 tools/build_test_apks.py --preflight-only \
 ```sh
 python3 tools/build_font_bundle.py \
   .analysis/apk/base.apk \
-  .analysis/fonts/NotoSansCJKsc-Bold.otf \
+  .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf \
   .analysis/font-bundle-template \
   .analysis/font-bundle/resource-han-rounded.bundle
 mkdir -p app/src/main/assets/idoly-localify
@@ -44,7 +52,7 @@ python3 tools/prepare_module_font.py \
   app/src/main/assets/idoly-localify/resource-han-rounded.bundle
 ```
 
-此命令按 `config/font-source.json` 下载、缓存并校验官方字体；离线可加 `--font .analysis/fonts/NotoSansCJKsc-Bold.otf`。正式发布脚本同样将运行器旧 bundle 作为只读结构模板，重新装入当前默认字体，避免沿用旧字库。`resource-han-rounded.bundle` 及 Unity 对象名沿用旧标识，仅用于兼容已有安装与配置。
+此命令按 `config/font-source.json` 下载并校验官方可变字体，生成和缓存静态 SemiBold；离线可加 `--font .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf`。源文件与静态结果均检查 SHA-256。正式发布脚本同样将运行器旧 bundle 作为只读结构模板，重新装入当前默认字体，避免沿用旧字库。`resource-han-rounded.bundle` 及 Unity 对象名沿用旧标识，仅用于兼容已有安装与配置。
 
 将 `.analysis/font-bundle-template` 替换为实际模板文件。工具检查字体字节、对象及引用完整性，输出旁附校验报告。生成的 bundle 已加入 Git 忽略；构建前须自行准备，Gradle 不联网获取字体。LSPosed 用户完成模块构建安装后，启用作用域并启动一次游戏即可安装字体。
 
@@ -59,7 +67,7 @@ python3 tools/pipeline.py verify
 python3 tools/build_test_apks.py \
   --base .analysis/apk/base.apk \
   --split .analysis/apk/split_config.arm64_v8a.apk \
-  --font .analysis/fonts/NotoSansCJKsc-Bold.otf \
+  --font .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf \
   --font-patch-mode module-font \
   --lspatch .analysis/tools/lspatch.jar \
   --font-cache .analysis/font-cache \
@@ -68,9 +76,9 @@ python3 tools/build_test_apks.py \
 
 `build_test_apks.py` 只封装已有模块 APK，不会执行 Gradle。修改 Java、原生代码或内置资源后，必须先成功执行 `assembleDebug`，再封装；嵌入一致性检查只证明所选 APK 被正确嵌入，不证明它对应最新源码。
 
-默认 `module-font` 模式只嵌入模块；字体来自模块 AssetBundle，游戏内字体与图片不做替换。旧 `add-font` 流程仍可显式选择。
+默认 `module-font` 模式只嵌入模块；字体来自模块 AssetBundle。可另选图片汉化；旧字体修补模式仅用于兼容已有部署。
 
-打包脚本会检查 APK 包名、版本、原版签名和字体覆盖率，检查模块内置词典的字体模式与实际载荷是否配对，再按所选模式处理字体、嵌入模块、签名，并核对输出。兼容模式 `add-font` 保留游戏全部原字体资源，须搭配正式 pipeline 生成的 `replace-ui` 词典：界面文字默认使用 Noto Sans CJK SC Bold，纯数量与等级数字（包含千分位逗号）、商品售价整组（含币种符号与单位）、指定装饰标题及 Rank 下方等级保留原字体，Rank 标题及好友列表昵称与等级整行仍用 Noto Sans CJK SC Bold，具体规则由 `ui_font_policy.h` 管理。旧 `preserve-non-cjk` 同样使用 `add-font`，仍保留其按字符分类的兼容行为。旧方案可显式构建 `--font-patch-mode replace-fot`，但模块内置词典也须使用旧模式。默认使用 Android 调试密钥；正式签名可通过 `--keystore` 和 `IDOLY_KEYSTORE_PASSWORD` 指定。测试包包含游戏文件，仅供本地使用。
+打包脚本会检查 APK 包名、版本、原版签名和字体覆盖率，检查模块内置词典的字体模式与实际载荷是否配对，再按所选模式处理字体、嵌入模块、签名，并核对输出。兼容模式 `add-font` 保留游戏全部原字体资源，须搭配正式 pipeline 生成的 `replace-ui` 词典：界面文字默认使用 Noto Sans CJK SC SemiBold，纯数字及符号组合（包含千分位逗号、时间及加号数字）、商品售价整组（含币种符号与单位）、指定装饰标题及 Rank 下方等级保留原字体，Rank 标题及好友列表昵称与等级整行仍用 Noto Sans CJK SC SemiBold，具体规则由 `ui_font_policy.h` 管理。旧 `preserve-non-cjk` 同样使用 `add-font`，仍保留其按字符分类的兼容行为。旧方案可显式构建 `--font-patch-mode replace-fot`，但模块内置词典也须使用旧模式。默认使用 Android 调试密钥；正式签名可通过 `--keystore` 和 `IDOLY_KEYSTORE_PASSWORD` 指定。测试包包含游戏文件，仅供本地使用。
 
 兼容字体修补模式下，可选的 `--font-cache` 缓存字体替换后的 APK。缓存按字体 patch 模式、原版 base、字体、构建脚本及依赖版本的 SHA/版本绑定；修改插件代码后再次打包可跳过 Unity 字体重写。每次仍检查原版拆分 APK 的版本和签名、当前字符覆盖、缓存字体字节，并重新嵌入和签名最新模块、检查最终产物。缺少缓存时自动生成，输入或工具变化时生成新缓存；缓存损坏则停止并提示删除对应条目。缓存含游戏资源，放在 Git 忽略的本地区域，不上传仓库。
 
@@ -92,7 +100,7 @@ python3 tools/deploy_text.py verify --serial "$ANDROID_SERIAL"
 
 部署工具会读取已安装游戏 APK 的 SHA-256，并检查实际字体载荷与词典模式配对。原版游戏或仅嵌入模块的 LSPatch 包还会读取设备上已安装的字体 bundle，解析实际 Font 字节、校验结构与字符覆盖；首次部署前需要启用模块并启动一次游戏。缓存同时绑定 APK 和 bundle 哈希，不能凭文件存在跳过检查。首次遇到一个 APK 时，只读复制其公开安装文件到临时目录，检查后删除；字体摘要和字符覆盖表按 APK 摘要缓存在 `.analysis/font-payload-cache-v2/`。更换 APK 后自动重新检查，不以设备外部字典的旧模式推断字体。同一 APK 下也会对当前原文、译文及目标字典重新核对缺字。模式不符或缺字时在写入前停止，需先安装匹配的测试包。在线文本热更新也不能改变运行中的字体模式；字体模式变更需要匹配的字体载荷并重启。LSPosed 下更新字体只需更新模块 APK；LSPatch 的内嵌模块方式仍需重新封装并安装测试 APK，但无需重写游戏字体资源。
 
-剧情为实时演算，直接进入待验证的话数即可。界面检查可使用 ADB 截图和本地加载日志；当前测试环境中应避免调用游戏 UI 元素列表，该操作曾导致闪退。
+剧情为实时演算，直接进入待验证的话数即可。界面检查使用截图、手动采集和本地加载日志，避免对 Unity 游戏调用 UI 元素列表。
 
 ## 常规验证
 

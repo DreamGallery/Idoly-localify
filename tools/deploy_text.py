@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,43 @@ RESOURCE_NAME = re.compile(r"^adv_[A-Za-z0-9_.-]+\.txt$")
 HASH_BATCH_SIZE = 64
 ERROR_TAIL_LIMIT = 1200
 LIST_END = "__IDOLY_FILE_LIST_COMPLETE__"
+
+
+def dictionary_removals(previous: dict, candidate: dict) -> list[dict]:
+    """Find translated source keys that a local build would silently discard."""
+    removed = []
+    for section in ("text", "i18n", "i18n_by_source"):
+        old, new = previous.get(section, {}), candidate.get(section, {})
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            raise ValueError(f"Invalid dictionary section: {section}")
+        for key, value in old.items():
+            if section == "i18n_by_source":
+                if not isinstance(value, dict) or not isinstance(new.get(key, {}), dict):
+                    raise ValueError("Invalid source-guarded i18n dictionary")
+                for source, translation in value.items():
+                    replacement = new.get(key, {}).get(source)
+                    if (isinstance(translation, str) and translation and translation != source
+                            and (not replacement or replacement == source)):
+                        removed.append({"section": section, "key": key, "source": source})
+            elif isinstance(value, str) and value and value != key:
+                replacement = new.get(key)
+                if not replacement or replacement == key:
+                    removed.append({"section": section, "key": key})
+    return sorted(removed, key=lambda item: (item["section"], item["key"], item.get("source", "")))
+
+
+def check_dictionary_upgrade(adb_bin: str, serial: str, candidate: Path,
+                             expected_remote_hash: str, report: Path) -> list[dict]:
+    raw = adb(adb_bin, serial, "exec-out", "cat", f"{REMOTE_BASE}/dict.json")
+    if hashlib.sha256(raw.encode("utf-8")).hexdigest() != expected_remote_hash:
+        raise ValueError("Device dictionary changed during comparison; retry")
+    candidate_bytes = candidate.read_bytes()
+    removals = dictionary_removals(json.loads(raw), json.loads(candidate_bytes))
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps({"device_sha256": expected_remote_hash,
+        "candidate_sha256": hashlib.sha256(candidate_bytes).hexdigest(),
+        "removed_translations": removals}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return removals
 
 
 def adb(adb_bin: str, serial: str, *args: str) -> str:
@@ -217,6 +255,10 @@ def main() -> int:
     parser.add_argument("--adb", default=os.getenv("ADB", "adb"))
     parser.add_argument("--restart", action="store_true",
                         help="Apply only: restart the game after successful hash verification")
+    parser.add_argument("--dictionary-report", type=Path,
+                        default=ROOT / ".analysis/text-deploy-dictionary-diff.json")
+    parser.add_argument("--allow-dictionary-removals", action="store_true",
+                        help="Apply only: permit reviewed intentional translation removals")
     args = parser.parse_args()
     if args.restart and args.command != "apply":
         parser.error("--restart is only valid with apply")
@@ -234,6 +276,13 @@ def main() -> int:
         remote_web = device_web_notice_hash(args.adb, args.serial)
         differences = plan(expected_dict, expected_resources,
                            remote_dict, remote_resources, expected_web, remote_web)
+        removals = []
+        if differences["dictionary_changed"] and remote_dict is not None:
+            removals = check_dictionary_upgrade(args.adb, args.serial, pipeline.dictionary,
+                                                remote_dict, args.dictionary_report)
+        if args.command == "apply" and removals and not args.allow_dictionary_removals:
+            raise ValueError(f"Local dictionary would remove {len(removals)} device translations; "
+                             f"sync newer sources first. See {args.dictionary_report}")
         archived_to = None
         archived_count = 0
         if args.command == "apply":
@@ -245,6 +294,7 @@ def main() -> int:
             differences = plan(expected_dict, expected_resources,
                                remote_dict, remote_resources, expected_web, remote_web)
         summary = {"dictionary_changed": differences["dictionary_changed"],
+                   "dictionary_removed_translations": len(removals),
                    "web_notice_changed": differences["web_notice_changed"],
                    "resources_changed": len(differences["resources_changed"]),
                    "device_only": len(differences["device_only"]),

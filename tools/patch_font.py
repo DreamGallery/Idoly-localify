@@ -15,9 +15,10 @@ import zipfile
 from fontTools.ttLib import TTCollection, TTFont
 import UnityPy
 
+from font_policy import INDEPENDENT_FONT_NAME
+
 
 FONT_NAME = "FOT-UDKakugo_LargePro-DB"
-INDEPENDENT_FONT_NAME = "Localify-ResourceHanRoundedSC-ExtraBold"
 FONT_MODES = ("replace-fot", "add-font")
 SPLIT_PREFIX = "assets/bin/Data/sharedassets0.assets.split"
 CHUNK_SIZE = 1024 * 1024

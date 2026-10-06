@@ -13,6 +13,11 @@
       "name": "GachaAtlas",
       "entry": "assets/bin/Data/93223bc5b1e044126b2284239d290662",
       "texture_id": 24
+    },
+    {
+      "name": "PhotoAtlas",
+      "entry": "assets/bin/Data/cca71614f07f64a208dfaf954643d78d",
+      "texture_id": 3
     }
   ],
   "buttons": [
@@ -185,6 +190,22 @@
         {
           "text": "扭蛋",
           "y": 91
+        }
+      ],
+      "clear_padding": 2
+    },
+    {
+      "sprite": "panorama_setting_icon",
+      "entry": "assets/bin/Data/5dc01d619825f4a3ba69e9ea2c7719d8",
+      "atlas": "PhotoAtlas",
+      "erase_from_y": 78,
+      "circle_diameter": 100,
+      "font_size": 23,
+      "stroke": 3,
+      "lines": [
+        {
+          "text": "设置",
+          "y": 81
         }
       ],
       "clear_padding": 2

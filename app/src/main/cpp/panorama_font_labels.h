@@ -6,14 +6,28 @@
 namespace panorama_font_labels {
 inline constexpr std::string_view labelRoot =
     "WindowSystem/WindowRoot/HomeWindow(Clone)/HomeTopScreen(Clone)/ScreenCanvas/ScreenRoot/CharacterPage/SlideRoot/Character/HomeRenewalRoot/Panorama/LabelRoot/";
+inline constexpr std::string_view musicTitleRoot =
+    "WindowSystem/WindowRoot/PanoramaWindow(Clone)/PanoramaMusicSelectScreen(Clone)/ScreenCanvas/ScreenRoot/HeaderRoot/TitleRoot/";
+
+inline std::string_view labelLeaf(std::string_view path) {
+    for (auto root : {labelRoot, musicTitleRoot}) {
+        if (path.substr(0, root.size()) != root) continue;
+        const auto leaf = path.substr(root.size());
+        if (leaf == "360" || leaf == "LIVE") return leaf;
+    }
+    return {};
+}
+
+inline float musicTitleGap(float parentWidth) {
+    return std::isfinite(parentWidth) && parentWidth > 0.0f ? parentWidth * 0.02f : 0.0f;
+}
 
 // Accept TMP UnicodeChar buffers without coupling this helper to the router.
 // capacity is the actual IL2CPP array length; bytes after the first NUL are stale.
 template <typename UnicodeChar>
-inline bool shouldUseRhr(std::string_view path, const UnicodeChar* text, size_t capacity) {
-    if (!text || capacity < 5 || capacity > 65536 ||
-        path.substr(0, labelRoot.size()) != labelRoot) return false;
-    const auto leaf = path.substr(labelRoot.size());
+inline bool shouldUseReplacement(std::string_view path, const UnicodeChar* text, size_t capacity) {
+    if (!text || capacity < 5 || capacity > 65536) return false;
+    const auto leaf = labelLeaf(path);
     const std::u32string_view expected = leaf == "360" ? U"360°" : leaf == "LIVE" ? U"LIVE" : U"";
     if (expected.empty()) return false;
     for (size_t i = 0; i < expected.size(); ++i)

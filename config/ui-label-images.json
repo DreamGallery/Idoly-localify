@@ -535,6 +535,261 @@
       ],
       "alpha_cutoff": 8,
       "clear_padding": 2
+    },
+    {
+      "sprite": "label_selected",
+      "entry": "assets/bin/Data/90aa4ab70295246ec83ee7a58f7d89ca",
+      "source_sha256": "19920ae973e1f19505d350ff385351fd704a70bd2e8ebae86389999c3712ce68",
+      "packed_box": [
+        675,
+        1669,
+        803,
+        1701
+      ],
+      "atlas": "LoveADVAtlas",
+      "text": "已选择",
+      "orientation": "horizontal",
+      "font_size": 31,
+      "min_font_size": 31,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 678
+        },
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 779
+        },
+        {
+          "entry": "assets/bin/Data/087d1c861dbda4dfaa78b1686ec7d351",
+          "source_sha256": "85a2199c4ceb0f689ac96a6dc56c890a7bd0624a25c8d99ef0cdfe7b7072c2e5",
+          "image_path_id": 842
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "love_btn_achievement",
+      "entry": "assets/bin/Data/c2cdbadae4a854a129f3f37f4a5892a9",
+      "source_sha256": "10f6ac8a079c8ae455e8c7b5a2cd72e858fddae1c32332e1f536b3e2a295c256",
+      "packed_box": [
+        657,
+        469,
+        937,
+        509
+      ],
+      "atlas": "LoveAtlas",
+      "text": "结局达成情况",
+      "orientation": "horizontal",
+      "font_size": 38,
+      "min_font_size": 38,
+      "strokes": [],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "mesh_margin": 1,
+      "render_mode": "image_rectangle",
+      "image_consumers": [
+        {
+          "entry": "assets/bin/Data/b8fc45b598f9e4eedadfc97ddcb9b3c5",
+          "source_sha256": "24d792b4f75462e320ef3a9406a3d1854f737a5d9c27b94003e550c1796d2d7f",
+          "image_path_id": 193
+        }
+      ],
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_doing_fan_event",
+      "entry": "assets/bin/Data/576dd4bb2bfeb4c7ebaeb41918c889f3",
+      "source_sha256": "e9d96946cc2d55eee426a16a1b0eb5a60138f89c1eac46a81f887e69702b3bf7",
+      "packed_box": [
+        551,
+        593,
+        751,
+        657
+      ],
+      "atlas": "HomeAtlas",
+      "text": "核心粉丝率\n提升中",
+      "orientation": "horizontal",
+      "font_size": 24,
+      "min_font_size": 20,
+      "line_spacing": 3,
+      "strokes": [
+        {
+          "width": 2,
+          "color": [
+            242,
+            140,
+            0,
+            255
+          ]
+        }
+      ],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "background_rgba": [
+        254,
+        166,
+        0,
+        255
+      ],
+      "background_tolerance": 8,
+      "mesh_margin": 1,
+      "render_mode": "sprite_mesh",
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_doing_promotion",
+      "entry": "assets/bin/Data/c5df6814e25ba488e9f57a3f0673fabe",
+      "source_sha256": "6d1a693d5a62b7d1f349691e587bbb1e9da5f07268e96390203f09da264df84d",
+      "packed_box": [
+        551,
+        661,
+        751,
+        725
+      ],
+      "atlas": "HomeAtlas",
+      "text": "粉丝获取中",
+      "orientation": "horizontal",
+      "font_size": 30,
+      "min_font_size": 30,
+      "line_spacing": 0,
+      "strokes": [
+        {
+          "width": 2,
+          "color": [
+            54,
+            173,
+            217,
+            255
+          ]
+        }
+      ],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "background_rgba": [
+        64,
+        204,
+        255,
+        255
+      ],
+      "background_tolerance": 8,
+      "mesh_margin": 1,
+      "render_mode": "sprite_mesh",
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "home_doing_refresh",
+      "entry": "assets/bin/Data/191be31305a9b490abe4c1ded3b6e38b",
+      "source_sha256": "41602b36cfe23965f41657f4cfd877bd980c5994f55d5203beab2f3eaf2bf678",
+      "packed_box": [
+        579,
+        776,
+        779,
+        840
+      ],
+      "atlas": "HomeAtlas",
+      "text": "体力恢复中",
+      "orientation": "horizontal",
+      "font_size": 30,
+      "min_font_size": 30,
+      "line_spacing": 0,
+      "strokes": [
+        {
+          "width": 2,
+          "color": [
+            27,
+            196,
+            87,
+            255
+          ]
+        }
+      ],
+      "fill_rgba": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "background_rgba": [
+        32,
+        227,
+        100,
+        255
+      ],
+      "background_tolerance": 8,
+      "mesh_margin": 1,
+      "render_mode": "sprite_mesh",
+      "alpha_cutoff": 8,
+      "clear_padding": 2
+    },
+    {
+      "sprite": "noti_limited",
+      "entry": "assets/bin/Data/74f4a3a43e7414116a99c03cc9a7011c",
+      "source_sha256": "85f4bc97fd86b4927ba5b50a23a056748cfcbdc72dad1e473271bac637146916",
+      "packed_box": [
+        1256,
+        808,
+        1381,
+        847
+      ],
+      "atlas": "CommonAtlas",
+      "text": "期间限定",
+      "orientation": "horizontal",
+      "font_size": 29,
+      "min_font_size": 27,
+      "strokes": [
+        {
+          "width": 3,
+          "color": [
+            255,
+            255,
+            255,
+            255
+          ]
+        }
+      ],
+      "fill_rgba": [
+        255,
+        109,
+        133,
+        255
+      ],
+      "mesh_margin": 1,
+      "alpha_cutoff": 8,
+      "clear_padding": 2,
+      "enclosed_background_rgba": [
+        255,
+        255,
+        255,
+        255
+      ]
     }
   ],
   "atlases": [
@@ -558,6 +813,13 @@
       "source_sha256": "46eac140ac438729149fbe1dce0b4dd82c428d615c65312bb9535664c528c297",
       "texture_id": 17,
       "texture_name": "sactx-0-1024x2048-ASTC 6x6-LoveADVAtlas-9df05f4f"
+    },
+    {
+      "name": "HomeAtlas",
+      "entry": "assets/bin/Data/50ab47f1baed64ffc923a7cbca109d9a",
+      "source_sha256": "b13760d60e844128372a69dd7fa9bef90a6c6b517d044b9fd1fce5ab33f6562b",
+      "texture_id": 19,
+      "texture_name": "sactx-0-1024x2048-ASTC 6x6-HomeAtlas-bd012772"
     }
   ]
 }

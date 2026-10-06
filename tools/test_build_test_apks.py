@@ -147,6 +147,39 @@ class FontCacheTests(unittest.TestCase):
 
 
 class ModuleFontTests(unittest.TestCase):
+    def test_add_font_signed_output_requires_matching_module_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module, wrapped = root / "module.apk", root / "wrapped.apk"
+            font = root / "requested.otf"
+            font.write_bytes(b'requested font')
+            with ZipFile(module, "w") as archive:
+                archive.writestr("assets/idoly-localify/dict.json", json.dumps(
+                    {"font": True, "font_mode": "replace-ui"}))
+            def wrap():
+                with ZipFile(wrapped, "w") as archive:
+                    archive.writestr(f"assets/lspatch/modules/{MODULE_PACKAGE}.apk", module.read_bytes())
+                    archive.writestr("assets/lspatch/origin.apk", b'legacy add-font APK')
+            wrap()
+            with patch("build_test_apks.verify_font") as embedded:
+                with self.assertRaisesRegex(ValueError, "standalone font bundle"):
+                    verify_embedded(wrapped, module, font, "add-font")
+                embedded.assert_not_called()
+            with ZipFile(module, "a") as archive:
+                archive.writestr("assets/idoly-localify/resource-han-rounded.bundle", b'bundle')
+            wrap()
+            with patch("patch_font.font_bytes", return_value=b'requested font'), \
+                    patch("build_font_bundle.verify") as bundle, \
+                    patch("build_test_apks.verify_font") as embedded:
+                verify_embedded(wrapped, module, font, "add-font")
+                bundle.assert_called_once_with(b'bundle', b'requested font')
+                embedded.assert_called_once()
+                embedded.reset_mock()
+                bundle.side_effect = ValueError('Embedded font does not match requested font byte-for-byte')
+                with self.assertRaisesRegex(ValueError, 'does not match requested font'):
+                    verify_embedded(wrapped, module, font, "add-font")
+                embedded.assert_not_called()
+
     def test_missing_module_bundle_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             module = Path(directory) / "module.apk"

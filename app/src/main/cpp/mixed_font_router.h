@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "showcase_bgm_titles.h"
 namespace mixed_font_router {
-// Whole-label routing: any CJK codepoint selects the full RHR font.
+// Whole-label routing: any CJK codepoint selects the full replacement font.
 constexpr bool isCjk(uint32_t c) {
     return c == 0x3005 || c == 0x3007 || c == 0x303b ||
         (c >= 0x3041 && c <= 0x3096) || (c >= 0x3099 && c <= 0x309f) ||

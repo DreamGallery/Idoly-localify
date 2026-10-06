@@ -131,7 +131,6 @@ final class FontProfileEditor {
             case "alignment": return "对齐";
             case "content_width_ratio": return "容器可用宽度比例";
             case "rect_size_unity": return "文字框尺寸";
-            case "auto_size_when_characters_gt": return "自动缩放字数阈值";
             case "rebuild_parent_layout_below_width_unity": return "重排宽度阈值";
             default: return name;
         }
@@ -167,13 +166,13 @@ final class FontProfileEditor {
         }
         labels.add("保存当前参数");
         labels.add("恢复内置默认参数");
-        labels.add("取消本次预览");
+        if (pending == session && !session.committed) labels.add("取消本次预览");
         fullScreenList(activity, "字体与排版", labels, null, indices.size(), which -> {
                 if (which < indices.size()) fields(activity, session, indices.get(which));
                 else if (which == indices.size()) save(activity, session);
                 else if (which == indices.size() + 1) reset(activity, session);
                 else rollback(activity, session);
-            }, "返回游戏", () -> rollback(activity, session));
+            }, "返回游戏", () -> { /* Keep an active preview until explicitly saved or cancelled. */ });
     }
 
     private static void fields(Activity activity, Session session, int index) {
@@ -263,8 +262,7 @@ final class FontProfileEditor {
             input.setSelectAllOnFocus(true);
             if (value instanceof Number) input.setInputType(InputType.TYPE_CLASS_NUMBER |
                 InputType.TYPE_NUMBER_FLAG_SIGNED |
-                ("auto_size_when_characters_gt".equals(key) ? 0 :
-                    InputType.TYPE_NUMBER_FLAG_DECIMAL));
+                InputType.TYPE_NUMBER_FLAG_DECIMAL);
             showDialog(activity, new PluginDialog.Builder(activity).setTitle(fieldLabel(key)).setView(input)
                 .setPositiveButton("预览", (dialog, which) -> {
                     try {
@@ -273,8 +271,7 @@ final class FontProfileEditor {
                         if (value instanceof Number) {
                             double number = Double.parseDouble(raw);
                             if (!Double.isFinite(number)) throw new IllegalArgumentException("数字无效");
-                            edited = "auto_size_when_characters_gt".equals(key) ?
-                                Integer.parseInt(raw) : number;
+                            edited = number;
                         } else if (value instanceof JSONArray) {
                             edited = new JSONArray(raw);
                         } else edited = raw;

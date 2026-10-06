@@ -14,7 +14,6 @@ ADJUSTMENTS = {
     'outline_width': (0, 1), 'face_dilate': (-1, 1),
     'font_size_ratio': (0.25, 2), 'font_size_base_unity': (1, 200),
     'line_spacing_delta_unity': (-100, 100), 'anchored_y_delta_unity': (-100, 100),
-    'auto_size_when_characters_gt': (0, 20),
     'rebuild_parent_layout_below_width_unity': (1, 1000),
     'fit_font_to_width_unity': (1, 1000), 'font_size_max_unity': (1, 200),
     'font_size_unity': (1, 200), 'anchored_y_unity': (-1000, 1000),
@@ -33,8 +32,7 @@ PROFILE_SPECS = {
                             {'outline_width', 'face_dilate', 'face_color_rgba',
                              'outline_color_rgba', 'vertex_color_rgba'}),
     'portrait_love_event_name': ('portrait_love_event', ['Name Label', 'Text'],
-                                 {'font_size_ratio', 'font_size_base_unity', 'alignment',
-                                  'auto_size_when_characters_gt'}),
+                                 {'font_size_ratio', 'font_size_base_unity', 'alignment'}),
     'portrait_love_event_dialogue': ('portrait_love_event', ['Message Root', 'Message Text'],
                                      {'line_spacing_delta_unity', 'anchored_y_delta_unity'}),
     'home_talk_dialogue': ('home_talk', ['Bottom', 'SerifWIndow', 'Serif'],
@@ -118,6 +116,14 @@ def validate(data):
     if data.get('font') == {'mode': 'preserve-non-cjk', 'unity_font_name': INDEPENDENT_FONT_NAME}:
         data = copy.deepcopy(data)
         data['font']['mode'] = DEFAULT_FONT_MODE
+    data = copy.deepcopy(data)
+    for profile in data.get('profiles', []) if isinstance(data.get('profiles'), list) else []:
+        if isinstance(profile, dict) and profile.get('id') == 'portrait_love_event_name':
+            adjust = profile.get('adjust')
+            if isinstance(adjust, dict) and 'auto_size_when_characters_gt' in adjust:
+                old = adjust.pop('auto_size_when_characters_gt')
+                if type(old) is not int or not 0 <= old <= 20:
+                    raise ValueError('invalid retired portrait auto-size threshold')
     font = data.get('font')
     _object(font, {'mode', 'unity_font_name'}, 'font')
     if font.get('mode') != DEFAULT_FONT_MODE or font.get('unity_font_name') != INDEPENDENT_FONT_NAME:
@@ -172,8 +178,6 @@ def validate(data):
         for key, value in adjust.items():
             if key in ADJUSTMENTS:
                 _number(value, *ADJUSTMENTS[key], f'{label}.{key}')
-                if key == 'auto_size_when_characters_gt' and not isinstance(value, int):
-                    raise ValueError(f'{label}.{key}: expected integer')
             elif key in COLORS:
                 if not isinstance(value, list) or len(value) != 4:
                     raise ValueError(f'{label}.{key}: expected RGBA array')

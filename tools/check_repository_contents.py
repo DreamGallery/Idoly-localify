@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORIES = (ROOT, toolkit_root(ROOT),
                 translator_root(ROOT))
 LOCAL_NAMES = {".env", "octo-settings.json", "octocacheevai", "master-tag.pb"}
-LOCAL_SUFFIXES = {".apk", ".apks", ".aab", ".db", ".sqlite", ".sqlite3",
+LOCAL_SUFFIXES = {".apk", ".apks", ".xapk", ".aab", ".db", ".sqlite", ".sqlite3",
                   ".pem", ".key", ".jks", ".keystore", ".p12",
                   ".otf", ".ttf", ".ttc", ".log"}
 LOCAL_PARTS = {".analysis", ".gradle", ".venv", "build"}

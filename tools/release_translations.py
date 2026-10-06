@@ -97,6 +97,38 @@ def digest(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''): value.update(block)
     return value.hexdigest()
 
+
+def release_output(key, result, dry_run):
+    """Expose only completed publications, even if the following publication fails."""
+    if dry_run or not os.environ.get('GITHUB_OUTPUT'):
+        return
+    patterns = {'plugin_tag': r'v\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*',
+                'text_tag': r'text-[0-9a-f]{16}'}
+    tag = result.get('tag', '')
+    completed = result.get('published') or (key == 'text_tag' and result.get('unchanged'))
+    if not completed:
+        return
+    if key not in patterns or not re.fullmatch(patterns[key], tag):
+        raise ValueError('Invalid completed release output')
+    with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as stream:
+        stream.write(f'{key}={tag}\n')
+
+
+def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run):
+    from release_latest import publish_latest
+    results = []
+    if apk:
+        result = publish(repo, 'v' + version, [apk], False, dry_run, notes=apk_notes)
+        results.append(result)
+        release_output('plugin_tag', result, dry_run)
+    result = publish(repo, 'text-' + text_version,
+                     [output / 'text-update.zip', output / 'manifest.json'], False, dry_run)
+    results.append(result)
+    results.append(publish_latest(repo, output, 'text-' + text_version, dry_run))
+    # Retention starts only after the mutable entry points to this complete version.
+    release_output('text_tag', result, dry_run)
+    return results
+
 def plugin_version(project):
     source = (project / 'app/build.gradle').read_text()
     match = re.search(r"versionName\s+['\"]([0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9]+)*)['\"]", source)
@@ -441,6 +473,7 @@ def main():
             run([project / 'gradlew', ':app:assembleRelease', '--no-daemon'], project)
             apk = output / f'idoly-localify-{version}.apk'
             shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)
+            run([args.python, project / 'tools/check_release_apk.py', apk], project)
         exported = export_sources(machine, machine / 'csv', source, stage,
                                   skip_stories, summary, apply=True)
         migration_paths = migration_receipt['changed_paths']
@@ -456,11 +489,8 @@ def main():
     else:
         finalized = retry_collaboration_release(args.repository_dir, base_revision, args.data_branch, finalize)
     manifest, apk, apk_notes, data_commit, changed, output, version = finalized
-    results = []
-    if apk:
-        results.append(publish(args.repository, 'v' + version, [apk], False, args.dry_run, notes=apk_notes))
-    results.append(publish(args.repository, 'text-' + manifest['version'],
-                           [output / 'text-update.zip', output / 'manifest.json'], True, args.dry_run))
+    results = publish_built_assets(args.repository, version, apk, apk_notes,
+                                  output, manifest['version'], args.dry_run)
     report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run,
               'releases': results, 'source_changed_files': len(changed), 'source_commit': data_commit, 'archive_sha256': manifest['archive']['sha256']}
     (work / 'release-report.json').write_text(json.dumps(report, indent=2) + '\n')

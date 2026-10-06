@@ -1,6 +1,6 @@
 // Loaded on the Unity thread from a font-routing callback. The module delivers
 // this bundle before nativeInstall; it is never downloaded or replaced in play.
-void* loadStandaloneRhrFont(bool report) {
+void* loadStandaloneReplacementFont(bool report) {
     static uint32_t bundleHandle = 0;
     static std::chrono::steady_clock::time_point retryAt{};
     const auto now = std::chrono::steady_clock::now();
@@ -73,8 +73,8 @@ void* loadStandaloneRhrFont(bool report) {
         valid = !exception && utf8(name) == "Localify-ResourceHanRoundedSC-ExtraBold";
     }
     if (valid && setCachedFontRetention(font, true)) {
-        loadedCjkOnlyFontHandle = gcHandleNew(font, false);
-        if (loadedCjkOnlyFontHandle) {
+        loadedReplacementFontHandle = gcHandleNew(font, false);
+        if (loadedReplacementFontHandle) {
             LOGI("Loaded standalone replacement font from module bundle (%lld bytes)", static_cast<long long>(size));
             return font;
         }

@@ -11,6 +11,21 @@ from deploy_text import assert_expected_avd, parse_hashes, plan, sync
 
 
 class DeployTextTests(unittest.TestCase):
+    def test_old_local_notice_dictionary_cannot_silently_remove_published_titles(self):
+        previous = {"text": {"新しいお知らせ": "新的公告", "既存": "已有"},
+                    "i18n": {"mission.top.fab": "一键"},
+                    "i18n_by_source": {"notice.title": {"新しいお知らせ": "新的公告"}}}
+        candidate = {"text": {"既存": "已有"}, "i18n": {"mission.top.fab": "一键领取"}}
+        lost = deploy_text.dictionary_removals(previous, candidate)
+        self.assertEqual(len(lost), 2)
+        self.assertEqual({item["section"] for item in lost}, {"text", "i18n_by_source"})
+        self.assertFalse(any(item["key"] == "mission.top.fab" for item in lost))
+
+    def test_identity_entries_and_translation_corrections_are_not_removals(self):
+        previous = {"text": {"PR": "PR", "本文": "旧译文"}}
+        self.assertEqual(deploy_text.dictionary_removals(previous, {"text": {"本文": "新译文"}}), [])
+        self.assertEqual(len(deploy_text.dictionary_removals(previous, {"text": {"本文": "本文"}})), 1)
+
     def test_font_payload_mismatch_stops_apply_before_any_text_writes(self):
         with patch('sys.argv', ['deploy_text.py', 'apply', '--serial', 'emulator-5560',
                                 '--expected-avd', 'Idoly_Test']), \

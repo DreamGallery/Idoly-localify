@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 from font_policy import DEFAULT_FONT_MODE
 
 import build_story_titles
+import card_display_aliases
 import story_card_catalog
 import story_event_catalog
 import localize
@@ -327,7 +328,8 @@ class Pipeline:
         master_snapshot = {path: digest(path) for path in master_paths}
         static_inputs = required + [self.glossary, Path(toolkit.__file__),
                                     self.web_notice_title_resolutions,
-                                    self.root / "translations/story-metadata/love-group-names.json"]
+                                    self.root / "translations/story-metadata/love-group-names.json",
+                                    Path(card_display_aliases.__file__)]
         legal_workflow = None
         if self.legal_source.exists():
             legal_workflow = load_module("Hoshimi_Teleprompter", "src.legal_workflow")
@@ -453,12 +455,16 @@ class Pipeline:
             mission_template_report = stage / "mission-template-sources.json"
             result = localize.build(
                 self.root / "translations/ui/source.json",
-                self.root / "translations/ui/zh-Hans.json", dict_path, True,
+                self.root / "translations/ui/zh-Hans.json", dict_path, False,
                 font_mode=DEFAULT_FONT_MODE, story_dir=story_dir,
                 name_glossary=self.glossary, story_titles=title_path,
                 term_glossary=self.term_glossary,
                 master_text=master_path, conflict_report=runtime_conflicts,
                 notice_headings=notice_headings,
+                card_display_aliases=card_display_aliases.derive(
+                    json_file(self.root / "translations/master/orig/Card.json"),
+                    json_file(self.root / "translations/master/zh-Hans/Card.json"),
+                    json_file(self.root / "translations/story-metadata/catalog.json"), glossary),
                 legal_runtime=legal_path, legal_source=self.legal_source,
                 mission_source=self.root / "translations/master/orig/Mission.json",
                 mission_translation=self.root / "translations/master/zh-Hans/Mission.json",

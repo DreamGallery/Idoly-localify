@@ -57,6 +57,45 @@ class ModuleFontTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'metadata'):
                 fonts.verify_font(self.data, dict(self.spec, **{key: bad}))
 
+    def variable_spec(self, source):
+        return dict(self.spec, source={
+            'url': 'https://raw.githubusercontent.com/notofonts/noto-cjk/pinned/variable.otf',
+            'sha256': hashlib.sha256(source).hexdigest()}, instance={'axes': {'wght': 600}})
+
+    def test_variable_source_and_derived_face_are_both_cached_and_verified(self):
+        source = b'pinned variable font fixture'
+        spec = self.variable_spec(source)
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(source)) as get, \
+                patch('instantiate_noto.instantiate_font', return_value=self.data) as instantiate:
+            self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
+            self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
+            get.assert_called_once()
+            instantiate.assert_called_once_with(source, spec)
+        self.assertEqual((self.root / (spec['source']['sha256'] + '.otf')).read_bytes(), source)
+        (self.root / (spec['sha256'] + '.otf')).unlink()
+        with patch.object(fonts.urllib.request, 'urlopen') as get, \
+                patch('instantiate_noto.instantiate_font', return_value=self.data):
+            self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
+            get.assert_not_called()
+
+    def test_bad_variable_download_is_rejected_before_instantiation(self):
+        spec = self.variable_spec(b'pinned variable font fixture')
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(b'wrong')), \
+                patch('instantiate_noto.instantiate_font') as instantiate:
+            with self.assertRaisesRegex(ValueError, 'source SHA-256'):
+                fonts.resolve_font(spec, self.root)
+            instantiate.assert_not_called()
+        self.assertFalse((self.root / (spec['sha256'] + '.otf')).exists())
+
+    def test_bad_static_derivation_cannot_enter_the_output_cache(self):
+        source = b'pinned variable font fixture'
+        spec = self.variable_spec(source)
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(source)), \
+                patch('instantiate_noto.instantiate_font', return_value=b'wrong derived font'):
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                fonts.resolve_font(spec, self.root)
+        self.assertFalse((self.root / (spec['sha256'] + '.otf')).exists())
+
     def test_failed_template_validation_keeps_previous_output(self):
         config = self.root / 'source.json'
         config.write_text(json.dumps(self.spec))

@@ -1,8 +1,17 @@
 {
-  "family": "Noto Sans CJK SC",
-  "style": "Bold",
-  "weight": 700,
+  "family": "Localify Noto Sans CJK SC SemiBold",
+  "style": "Regular",
+  "weight": 600,
   "version": "2.004",
-  "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Bold.otf",
-  "sha256": "b5f0d1a190a7f9b43c310a8850630af12553df32c4c050543f9059732d9b4c0a"
+  "sha256": "5408d7fbad330fb163f1416460518bf76f37c5fd684442fc931981c5248c1b09",
+  "source": {
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/Variable/OTF/NotoSansCJKsc-VF.otf",
+    "sha256": "2745e9681cb9d8a5c8901b62c9e1bd98c9c774365fc3b84dd467621013b51cd3"
+  },
+  "instance": {
+    "axes": { "wght": 600 },
+    "family": "Localify Noto Sans CJK SC",
+    "style": "SemiBold",
+    "postscript_name": "LocalifyNotoSansCJKsc-SemiBold"
+  }
 }

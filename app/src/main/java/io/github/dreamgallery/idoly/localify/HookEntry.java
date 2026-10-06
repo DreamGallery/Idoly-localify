@@ -123,10 +123,10 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
                     () -> openBuiltInAsset(context, font.getName()), font);
                 Log.i(TAG, "Module font bundle " + (installed ? "installed: " : "verified: ") + font);
             } catch (Exception error) {
-                // Legacy LSPatch builds can still use the font embedded in the game.
                 // A failed update leaves the previous complete bundle available.
+                // Native loading retries the module bundle on later text callbacks.
                 Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
-                    + "existing bundle and allowing embedded game font fallback", error);
+                    + "existing complete module bundle for retry", error);
             }
             LocalifyOverlayUi.install((Application) context.getApplicationContext());
             LocalifyOverlayUi.configure(dataDir);

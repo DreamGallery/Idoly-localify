@@ -37,7 +37,7 @@ python3 ../Hoshimi_Teleprompter/main.py plan \
 # 将上面的 plan 改为 translate 执行模型翻译。
 ```
 
-接口配置来自翻译器自己的 `.env` 或环境变量。`--file`、`--prefix` 可限定范围；主项目的人名和术语审校表通过参数显式传入。姓名不作为单独翻译行，构建 TXT 时合并人名表。
+接口配置来自翻译器自己的 `.env` 或环境变量。`--file`、`--prefix` 可限定范围；主项目的人名和术语审校表通过参数显式传入。姓名不作为单独翻译行，构建 TXT 时合并人名表；若恋（`adv_love_*`）保留用于角色识别的原始 `name=`，由插件在显示时翻译姓名，保留头像和姓名框配色。
 
 脚本中的 `{user}`、富文本标签和字面 `\n` 必须保留。游戏会把字面 `\n` 渲染为换行，不应改成脚本值中的实际 CRLF。
 
@@ -110,7 +110,9 @@ python3 ../Hoshimi_Teleprompter/main.py notice-plan \
 
 公告入口标题（包括网页 H1 和索引 title/listTitle）只有在各页面译文一致时才加入通用映射。同名异译默认保留各页正文、跳过通用入口映射；构建报告位于 `.analysis/notice-title-conflicts.json`。如需统一入口用语，在 `translations/notice/title-resolutions.json` 保存显式决议：`schema_version: 1`，`resolutions` 按原文索引，每项包含选用的 `translation`、`review_method`（`human` 或 `assistant`）、`reason` 和 `candidates`（所有相关页面路径到各自译文的字典）。决议必须选用已有候选；页面或译文变化后会拒绝过期决议，需重新审阅，不按文件顺序覆盖。入口决议不更改网页正文译文。
 
-首页工作槽的“名称 Lv等级”使用 UI JSON 中独立的 `home_activity_names`：来源文件按原名映射自身，译文文件维护对应中文名称，例如 `サイン会` → `签名会`。仅首页 `HomeTopScreen/ActivityPage/.../ActivityCells` 下 `FanEvent`、`Promotion`、`Refresh` 三个已确认的 `NameBase/Name` 完整控件路径可使用，保留 ` Lv` 和 1–6 位 ASCII 等级数字。此规则不会加入通用文本词典，也不放宽全局数字模板的匹配门槛。名称不接受空白、控制符或占位符，最多 64 项、每个名称最多 64 UTF-8 字节；拒绝会重复翻译的名称链。旧词典缺少此字段时按空规则处理。只有文本、没有控件路径的历史日志仍标记为待确认，不因此宣称已覆盖。
+首页工作槽的“名称 Lv等级”使用 UI JSON 中独立的 `home_activity_names`：来源文件按原名映射自身，译文文件维护对应中文名称，例如 `サイン会` → `签名会`。仅首页 `HomeTopScreen/ActivityPage/.../ActivityCells` 下 `FanEvent`、`Promotion`、`Refresh` 三个 `NameBase/Name`，以及工作中 `FanEventScreen`、`PromotionScreen`、`RefreshScreen` 的 `ActGameFooter/ActGameInfo/Level` 完整控件路径可使用，保留 ` Lv` 和 1–6 位 ASCII 等级数字。此规则不会加入通用文本词典，也不放宽全局数字模板的匹配门槛。名称不接受空白、控制符或占位符，最多 64 项、每个名称最多 64 UTF-8 字节；拒绝会重复翻译的名称链。旧词典缺少此字段时按空规则处理。只有文本、没有控件路径的历史日志仍标记为待确认，不因此宣称已覆盖。
+
+粉丝活动排行榜会把原始活动名填入已翻译的标题句式。`FanEventRankingSheet/Canvas/Root/UIContentArea/SheetContainer/Header/Description` 使用专门的名称匹配：仅处理握手会、摄影会、签名会，读取当前 `fanEvent.ranking.sheet.description` 与 `common.group.prefix` 译文模板，要求名次范围和小组编号均为1–6位 ASCII 数字。名称沿用现有精确词典，数字及前导零原样保留，不改排行榜中的玩家昵称。
 
 ## 构建与校验
 
@@ -121,6 +123,8 @@ python3 tools/pipeline.py verify
 
 构建生成剧情 JSON 补丁、合并 TXT、剧情标题映射、MasterDB 文本映射与按记录索引、最终运行时词典及公告词典。合并 TXT 保存在 HoshimiToolkit 的 `cache/local-files/resource/`，补丁和审校 JSON 保存在主项目；本机构建清单与冲突报告位于 `.analysis/`。
 
+卡片显示文本由 `card_display_aliases.py` 结合 Card 表、剧情目录中的角色对应关系和姓名词典生成完整匹配项，覆盖“卡名　姓名”及末尾带 `　★1` 至 `　★5` 的扭蛋记录，也接受卡名已翻译而姓名仍为日文的状态。未知卡片关系不猜测，关系或译文冲突会停止生成；不会对任意文本做姓名子串替换。更新卡名或姓名后运行同一构建流程即可重新生成。
+
 构建先暂存并校验，再检查输入没有被并行编辑，最后逐文件发布。`verify` 只读核对源文件、译文和输出的一致性。缺少 CSV、源文件版本不符、占位符损坏或孤立数据均会导致失败；根据 `status` 的提示修复后重跑。
 
 运行时先按界面键和原文、MasterDB 记录字段、剧情脚本或公告页面匹配。通用原文映射中，已审核的界面 `text` 是明确覆盖；其余派生来源同文异译时不按读取顺序强选，冲突记录在 `.analysis/runtime-text-conflicts.json`。`tools/audit_master_runtime.py` 和 `tools/audit_runtime_coverage.py` 可辅助检查映射，日志命中率不代表整个游戏的翻译覆盖率。
@@ -128,6 +132,10 @@ python3 tools/pipeline.py verify
 检查页面漏译时，同时核对标题、标签和说明，不能只处理商品名。旧 `runtime_capture.py` 的增量文件只包含本次新增日志；游戏日志会去重，因此以前记录过但尚未翻译的原文可能不在增量里。用完整本地日志重新运行覆盖审计，或用浮窗开启独立采集，并结合布局记录和截图确认实际可见内容。已有 `i18n` 译文也不代表直接写入 TMP 的同文标签会命中；确认语义一致后可在界面 `text` 中增加精确映射，避免全局合并所有界面键。占位模板、账号数值和领取日期不进入固定翻译词典。
 
 ## 本地热更新发布目录
+
+`pipeline.py build/verify` 只编译和校验本地文件，不会刷新游戏资源或下载最新译文。本地测试前应核对最新发布的 `manifest.json`，同步公告源、译文和已完成的协作内容，再叠加本次修改；公告列表标题来自官方公告索引及网页标题，不由 Octo 清单单独提供。正式发布的 `refresh_sources.py` 会分别刷新 Octo、MasterTag 和公告索引。
+
+`deploy_text.py` 会比较设备现有词典，遇到本地字典丢失已有译文时停止部署，并将差异保存到 `.analysis/text-deploy-dictionary-diff.json`。先同步缺失数据；仅在确认是有意撤回或已被新版发布淘汰的映射时使用 `--allow-dictionary-removals`。不要用直接覆盖字典文件的方式跳过这项检查。
 
 确认 `python3 tools/pipeline.py verify` 通过后，可生成供静态 HTTPS 主机托管的目录：
 
@@ -139,7 +147,7 @@ python3 tools/build_text_update.py \
   --base-url https://example.org/idoly/text-update --include-stories
 ```
 
-工具会再次执行完整 `pipeline.py verify`，默认只从已编译产物复制 `dict.json` 和可选的 `web-notice.json`；`--include-stories` 会追加全部已验证的 `resource/adv_*.txt`，不截取部分剧情。`--omit-notice` 可只发布界面词典。工具逐份检查 UTF-8、文件名、大小与 SHA-256，并限制总量。默认输出为 `.analysis/text-update-release/`；其 `manifest.json` 包含显示版本、文件的绝对 HTTPS URL 和 SHA-256。文件按内容哈希放在 `objects/` 下，全部就绪后才原子更新 manifest。可用 `--version` 指定显示版本，否则使用内容哈希。将整个目录原样上传到 HTTPS 静态主机，并确保上述 URL 返回文件字节（允许 HTTPS 重定向）；发布工具本身不上传文件。在游戏内展开「译」浮窗，填写托管后的 `manifest.json` URL。
+工具会再次执行完整 `pipeline.py verify`，默认只从已编译产物复制 `dict.json` 和可选的 `web-notice.json`；`--include-stories` 会追加全部已验证的 `resource/adv_*.txt`，不截取部分剧情。`--omit-notice` 可只发布界面词典。工具逐份检查 UTF-8、文件名、大小与 SHA-256，并限制总量。默认输出为 `.analysis/text-update-release/`；其 `manifest.json` 包含显示版本、文件的绝对 HTTPS URL 和 SHA-256。文件按内容哈希放在 `objects/` 下，全部就绪后才原子更新 manifest。可用 `--version` 指定显示版本，否则使用内容哈希。将整个目录原样上传到 HTTPS 静态主机，并确保上述 URL 返回文件字节（允许 HTTPS 重定向）；发布工具本身不上传文件。在游戏内展开「IP」浮窗，填写托管后的 `manifest.json` URL。
 
 正式编译词典使用 `replace-ui`，与 APK 的 `add-font` 载荷配对。修改字体路由模式需安装对应字体 APK 并重启，文本构建不会把正式模式重新设为旧 `replace-all`。字体构建契约见[构建与部署](build.md)。
 

@@ -32,6 +32,25 @@ class FontProfileTests(unittest.TestCase):
         header = PROFILE.parent.parent / 'app/src/main/cpp/font_profile_defaults.h'
         self.assertEqual(header.read_text(), render_header(self.data))
 
+    def test_retired_portrait_auto_size_migrates_without_resetting_adjustments(self):
+        old = copy.deepcopy(self.data)
+        adjust = next(p['adjust'] for p in old['profiles']
+                      if p['id'] == 'portrait_love_event_name')
+        adjust['auto_size_when_characters_gt'] = 2
+        adjust['font_size_ratio'] = 1.1
+        old['profiles'][0]['adjust']['outline_width'] = 0.6
+        upgraded = validate(old)
+        portrait = next(p['adjust'] for p in upgraded['profiles']
+                        if p['id'] == 'portrait_love_event_name')
+        self.assertNotIn('auto_size_when_characters_gt', portrait)
+        self.assertEqual(portrait['font_size_ratio'], 1.1)
+        self.assertEqual(upgraded['profiles'][0]['adjust']['outline_width'], 0.6)
+        self.assertEqual(adjust['auto_size_when_characters_gt'], 2)
+        for invalid in (True, -1, 21, 2.5, '2'):
+            adjust['auto_size_when_characters_gt'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate(old)
+
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required')
     def test_native_rejects_invalid_update_without_mutation(self):
         root = PROFILE.parent.parent

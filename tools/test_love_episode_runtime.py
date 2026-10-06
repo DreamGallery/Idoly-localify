@@ -11,8 +11,10 @@ class LoveEpisodeRuntimeTests(unittest.TestCase):
     def test_numeric_render_buffer_is_authoritative_and_other_labels_are_untouched(self):
         root = Path(__file__).resolve().parents[1]
         native = (root / 'app/src/main/cpp/localify.cpp').read_text()
-        hook = native[native.index('void* prepareLoveEpisodeGlyphs('):
-                      native.index('\nint32_t hookTmp3dSetArraySizes(')]
+        hook = (native[native.index('void* rebuildTmpGlyphBuffer('):
+                       native.index('\nvoid* prepareFormattedUiGlyphs(')]
+                + native[native.index('int32_t hookTmpUiSetArraySizes('):
+                         native.index('\nint32_t hookTmp3dSetArraySizes(')])
         fixture = r'''
 #include <cassert>
 #include <cstdint>
@@ -38,7 +40,7 @@ struct Label {
     void* processing = &raw;
     std::u16string getter = u"第1话进行中";
     bool reenter = false;
-    bool rhr = false;
+    bool replacementFont = false;
     int setCount = 0, renderCount = 0;
 };
 void fill(Il2CppByteArray& array, const std::u16string& text) {
@@ -94,9 +96,10 @@ auto methodGetParam = getParam;
 char* getTypeName(const void* type) { return strdup(static_cast<const char*>(type)); }
 auto typeGetName = getTypeName;
 auto il2cppFree = std::free;
+void* prepareFormattedUiGlyphs(void*, void* array) { return array; }
 void routeTmpFontBeforeGlyphLookup(void* object, void* array) {
     const auto* chars = reinterpret_cast<mixed_font_router::UnicodeChar*>(static_cast<Il2CppByteArray*>(array)->data);
-    static_cast<Label*>(object)->rhr = chars[0].unicode == 0x7b2c;
+    static_cast<Label*>(object)->replacementFont = chars[0].unicode == 0x7b2c;
 }
 int32_t render(void* object, void* array, void*) {
     auto& label = *static_cast<Label*>(object);
@@ -105,7 +108,6 @@ int32_t render(void* object, void* array, void*) {
     return 7;
 }
 auto origTmpUiSetArraySizes = render;
-void diagnoseHomeTalkGlyph(void*, const char*) {}
 #define LOGI(...) ((void)0)
 #define LOGE(...) ((void)0)
 '''
@@ -115,18 +117,18 @@ int main() {
     // The string cache looks translated, but a formatted setter writes only 1.
     fill(label.raw, u"1");
     assert(hookTmpUiSetArraySizes(&label, &label.raw, nullptr) == 7);
-    assert(label.getter == u"第1话进行中" && label.rhr && label.setCount == 1);
+    assert(label.getter == u"第1话进行中" && label.replacementFont && label.setCount == 1);
     // A complete buffer must not be reprocessed on every layout pass.
     hookTmpUiSetArraySizes(&label, label.processing, nullptr);
     assert(label.setCount == 1);
     // Fresh game digits override the stale getter and work after returning.
     fill(label.raw, u"28"); label.processing = &label.raw; label.reenter = true;
     hookTmpUiSetArraySizes(&label, label.processing, nullptr);
-    assert(label.getter == u"第28话进行中" && label.setCount == 2 && label.rhr);
+    assert(label.getter == u"第28话进行中" && label.setCount == 2 && label.replacementFont);
     // Another EpisodeText or a currency count must keep its own numeric buffer.
     Label other; other.path = "Other/EpisodeText"; fill(other.raw, u"1");
     hookTmpUiSetArraySizes(&other, &other.raw, nullptr);
-    assert(other.setCount == 0 && !other.rhr);
+    assert(other.setCount == 0 && !other.replacementFont);
     // Unsupported content stays unchanged, including unterminated arrays.
     Label invalid; fill(invalid.raw, u"10000");
     hookTmpUiSetArraySizes(&invalid, &invalid.raw, nullptr);
@@ -140,8 +142,9 @@ int main() {
             source = Path(directory) / 'fixture.cpp'
             binary = Path(directory) / 'fixture'
             source.write_text(fixture + hook + checks)
-            subprocess.run(['c++', '-std=c++17', '-I', str(root / 'app/src/main/cpp'),
-                            str(source), '-o', str(binary)], check=True, capture_output=True)
+            result = subprocess.run(['c++', '-std=c++17', '-I', str(root / 'app/src/main/cpp'),
+                                     str(source), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
             subprocess.run([str(binary)], check=True, capture_output=True)
 
 

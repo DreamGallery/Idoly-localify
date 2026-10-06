@@ -195,6 +195,7 @@ def build(source_path: Path, translation_path: Path, output_path: Path, dump: bo
           master_text: Path | None = None,
           conflict_report: Path | None = None,
           notice_headings: list[tuple[str, str]] | None = None,
+          card_display_aliases: dict[str, str] | None = None,
           legal_runtime: Path | None = None,
           legal_source: Path | None = None,
           mission_source: Path | None = None,
@@ -330,6 +331,10 @@ def build(source_path: Path, translation_path: Path, output_path: Path, dump: bo
                 validate(original, translated, f"master_{group}:{original}")
                 if translated and translated != original:
                     add_text(original, translated, f"master-{group}")
+    for original, translated in (card_display_aliases or {}).items():
+        validate(original, translated, f"card_display:{original}")
+        if translated and translated != original:
+            add_text(original, translated, "card-display")
     if story_titles is not None and story_titles.exists():
         with story_titles.open(encoding="utf-8") as stream:
             titles = json.load(stream)

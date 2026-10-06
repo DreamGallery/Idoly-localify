@@ -29,6 +29,7 @@ octocacheevai
 master-tag.pb
 *.apk
 *.apks
+*.xapk
 *.aab
 *.db
 *.sqlite

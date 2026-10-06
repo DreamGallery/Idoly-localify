@@ -496,7 +496,7 @@ final class LocalifyOverlayUi {
         input.setHint("https://example.org/idoly/manifest.json");
         input.setText(TextHotUpdater.readManifestUrl(dataDir));
         new PluginDialog.Builder(activity).setTitle("文本更新地址")
-            .setMessage("填写可直接访问的 HTTPS manifest.json 地址。留空可停用在线更新。")
+            .setMessage("填写可直接访问的 HTTPS manifest.json 地址。留空可停用在线文本更新。")
             .setView(input)
             .setPositiveButton("保存", (dialog, which) -> {
                 try {

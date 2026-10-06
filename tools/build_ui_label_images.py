@@ -23,6 +23,42 @@ def digest(data: bytes) -> str:
     return sha256(data).hexdigest()
 
 
+def fill_enclosed_transparency(image: Image.Image, color: list[int]) -> Image.Image:
+    """Back enclosed glyph counters without painting the exterior background."""
+    if len(color) != 4 or color[3] != 255:
+        raise ValueError('Enclosed label background must be opaque RGBA')
+    # Work before downsampling, where the drawn strokes have hard coverage.
+    # A transparent border ensures even edge-touching strokes are floodable.
+    width, height = image.size
+    occupied = image.getchannel('A').point(lambda value: 255 if value else 0)
+    outside = Image.new('L', (width + 2, height + 2))
+    outside.paste(occupied, (1, 1))
+    ImageDraw.floodfill(outside, (0, 0), 128)
+    holes = outside.crop((1, 1, width + 1, height + 1)).point(lambda value: 255 if value == 0 else 0)
+    result = image.copy()
+    result.paste(tuple(color), (0, 0, width, height), holes)
+    return result
+
+
+def restore_solid_label_background(original: Image.Image, color: list[int], tolerance: int) -> Image.Image:
+    """Restore reviewed flat pills between their pristine scanline edges.
+
+    Matching background pixels delimit each row; the antialiased outer edge,
+    original alpha and corner pixels remain untouched. Source hashes and the
+    configured tolerance bind this operation to the inspected static sprites.
+    """
+    if len(color) != 4 or color[3] != 255 or not 0 <= tolerance <= 8:
+        raise ValueError('Unreviewed solid label background')
+    result = original.copy()
+    for y in range(original.height):
+        positions = [x for x in range(original.width)
+                     if max(abs(a - b) for a, b in zip(original.getpixel((x, y)), color)) <= tolerance]
+        if positions:
+            for x in range(positions[0], positions[-1] + 1):
+                result.putpixel((x, y), tuple(color))
+    return result
+
+
 def mesh_mask(sprite: dict, packed: dict, box: list[int], texture_height: int) -> Image.Image:
     vertex = sprite['m_RD']['m_VertexData']
     position = vertex['m_Channels'][0]
@@ -72,10 +108,16 @@ def render_label(size: tuple[int, int], item: dict, font_path: Path,
             {'width': item.get('white_stroke', 0) + item.get('outer_stroke', 0), 'color': fill},
             {'width': item.get('white_stroke', 0), 'color': white}])
         text = item['text']
+        spacing = item.get('line_spacing', 4 / scale) * scale
         if item['orientation'] == 'horizontal':
-            bbox = draw.textbbox((0, 0), text, font=font)
-            placements = [(text, (width * scale - bbox[2] + bbox[0]) / 2 - bbox[0],
-                           (height * scale - bbox[3] + bbox[1]) / 2 - bbox[1])]
+            lines = text.split('\n')
+            boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+            total = sum(b[3] - b[1] for b in boxes) + spacing * (len(lines) - 1)
+            top = (height * scale - total) / 2
+            placements = []
+            for line, bbox in zip(lines, boxes):
+                placements.append((line, (width * scale - bbox[2] + bbox[0]) / 2 - bbox[0], top - bbox[1]))
+                top += bbox[3] - bbox[1] + spacing
         elif item['orientation'] == 'vertical':
             boxes = [draw.textbbox((0, 0), char, font=font) for char in text]
             gap = item['glyph_gap'] * scale
@@ -93,8 +135,11 @@ def render_label(size: tuple[int, int], item: dict, font_path: Path,
                 x = (max((stroke['width'] for stroke in strokes), default=0) + 3) * scale - bbox[0]
             for stroke in strokes:
                 draw.text((x, y), text, font=font, fill=tuple(fill),
-                          stroke_width=round(stroke['width'] * scale), stroke_fill=tuple(stroke['color']))
-            draw.text((x, y), text, font=font, fill=tuple(fill))
+                          stroke_width=round(stroke['width'] * scale), stroke_fill=tuple(stroke['color']),
+                          spacing=spacing, align='center')
+            draw.text((x, y), text, font=font, fill=tuple(fill), spacing=spacing, align='center')
+        if 'enclosed_background_rgba' in item:
+            layer = fill_enclosed_transparency(layer, item['enclosed_background_rgba'])
         image = layer.resize(size, Image.Resampling.LANCZOS)
         alpha = image.getchannel('A')
         if item.get('alpha_cutoff'):
@@ -227,9 +272,18 @@ def build(base: Path, config_path: Path, font: Path, output: Path, merge_manifes
             patch, report = render_label((local[2] - local[0], local[3] - local[1]), item, font,
                                          fill, config['white_rgba'], mask.crop(local))
             after = before.copy()
-            after.paste(patch, (local[0], local[1]))
+            if 'background_rgba' in item:
+                background = restore_solid_label_background(before.crop(local), item['background_rgba'],
+                                                            item['background_tolerance'])
+                background.alpha_composite(patch)
+                after.paste(background, (local[0], local[1]))
+            else:
+                after.paste(patch, (local[0], local[1]))
             check_regions(before, after, [local])
-            edited[item['atlas']].paste(patch, (bounds[0], bounds[1]))
+            # The atlas must receive the same composited pixels as the preview,
+            # including any restored pill background. Preserve the untouched
+            # portion of a partial sprite edit.
+            edited[item['atlas']].paste(after.crop(local), (bounds[0], bounds[1]))
             if padding:
                 refresh_sprite_padding(edited[item['atlas']], box, edit_region)
             regions[item['atlas']].append(edit_region)

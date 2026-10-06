@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-// Only the three observed HomeTopScreen work labels may use these short names.
+// Only reviewed home work labels and in-work footer labels use these short names.
 // This does not weaken NumericTextTemplateMatcher's global literal guard.
 class HomeActivityNameMatcher {
 public:
@@ -56,6 +56,15 @@ public:
     std::size_t size() const { return names.size(); }
 
     static bool isTargetPath(std::string_view path) {
+        constexpr std::string_view workPrefix = "WindowSystem/WindowRoot/ActivityWindow(Clone)/";
+        constexpr std::string_view workSuffix = "/ScreenCanvas/ScreenRoot/ActGameFooter/ActGameInfo/Level";
+        if (path.substr(0, workPrefix.size()) == workPrefix) {
+            const auto rest = path.substr(workPrefix.size());
+            for (const auto screen : {std::string_view("FanEventScreen(Clone)"),
+                std::string_view("PromotionScreen(Clone)"), std::string_view("RefreshScreen(Clone)")}) {
+                if (rest.substr(0, screen.size()) == screen && rest.substr(screen.size()) == workSuffix) return true;
+            }
+        }
         constexpr std::string_view prefix =
             "WindowSystem/WindowRoot/HomeWindow(Clone)/HomeTopScreen(Clone)/"
             "ScreenCanvas/ScreenRoot/ActivityPage/SlideRoot/Parent/ActivityCells/";

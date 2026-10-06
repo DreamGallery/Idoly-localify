@@ -39,6 +39,16 @@ public:
             // settings. All original selectors, guards and adjustments remain
             // strictly validated below; missing required profiles still fail.
             if (candidate.contains("profiles") && candidate["profiles"].is_array()) {
+                // The portrait pill sizes itself to its name. Retire the old
+                // character-count auto-fit toggle, retaining all user values.
+                for (auto& item : candidate["profiles"])
+                    if (item.is_object() && item.value("id", std::string()) == "portrait_love_event_name" &&
+                        item.contains("adjust") && item["adjust"].is_object() &&
+                        item["adjust"].contains("auto_size_when_characters_gt")) {
+                        const auto& old = item["adjust"]["auto_size_when_characters_gt"];
+                        if (!old.is_number_integer() || !number(old, 0, 20)) return false;
+                        item["adjust"].erase("auto_size_when_characters_gt");
+                    }
                 // Older subtitle settings predate the two layout controls.
                 // Fill only these new fields; retain every saved adjustment.
                 for (auto& item : candidate["profiles"])
@@ -83,8 +93,6 @@ public:
                     const auto& value = adjust.at(field.key());
                     if (bounds.contains(field.key())) {
                         if (!number(value, bounds[field.key()][0], bounds[field.key()][1])) return false;
-                        if (field.key() == "auto_size_when_characters_gt" && !value.is_number_integer())
-                            return false;
                     } else if (field.value().is_boolean()) {
                         if (!value.is_boolean()) return false;
                     } else if (field.value().is_array()) {

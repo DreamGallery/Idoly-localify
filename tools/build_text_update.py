@@ -89,6 +89,8 @@ def validate_json(name: str, data: bytes) -> None:
                 not isinstance(value["dump"], bool) or not isinstance(value["font"], bool) or
                 not isinstance(value["font_mode"], str)):
             raise ValueError("dict.json: unexpected runtime dictionary schema")
+        if value["dump"]:
+            raise ValueError("dict.json: automatic text capture must be disabled for publication")
         required_patch_mode(value["font_mode"])
         numeric = value.get("numeric_text_templates", {})
         if not isinstance(numeric, dict):

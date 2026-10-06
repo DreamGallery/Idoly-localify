@@ -39,7 +39,8 @@ void fitPanoramaLabels(void* self) {
     const auto leaf = utf8(name);
     if (error || (leaf != "360" && leaf != "LIVE")) return;
     const auto path = textObjectPath(self);
-    if (path != std::string(panorama_font_labels::labelRoot) + leaf) return;
+    if (panorama_font_labels::labelLeaf(path) != leaf) return;
+    const bool musicTitle = path == std::string(panorama_font_labels::musicTitleRoot) + leaf;
     auto* text = static_cast<Il2CppString*>(runtimeInvoke(getText, self, nullptr, &error));
     if (error || utf8(text) != (leaf == "360" ? "360°" : "LIVE")) return;
     running = true;
@@ -80,6 +81,30 @@ void fitPanoramaLabels(void* self) {
         if (changed) { void* args[] = {const_cast<float*>(target)}; runtimeInvoke(setter, object, args, &error); }
         return !error;
     };
+    if (musicTitle) {
+        // The original music-page HorizontalLayoutGroup has spacing=-35.
+        // Preserve its 60-point, left-aligned title and let the existing group
+        // lay out the replacement glyph widths with a proportional positive gap.
+        void* group = getComponentByType(parent, "UnityEngine.UI.dll", "UnityEngine.UI", "HorizontalLayoutGroup");
+        static const auto getSpacing = methodInfo("UnityEngine.UI.dll", "UnityEngine.UI", "HorizontalOrVerticalLayoutGroup", "get_spacing", 0);
+        static const auto setSpacing = methodInfo("UnityEngine.UI.dll", "UnityEngine.UI", "HorizontalOrVerticalLayoutGroup", "set_spacing", 1);
+        static const auto rebuild = methodInfo("UnityEngine.UI.dll", "UnityEngine.UI", "LayoutRebuilder", "ForceRebuildLayoutImmediate", 1);
+        float bounds[4], spacing;
+        if (!group || !getSpacing || !setSpacing || !rebuild ||
+            !read(rect("get_rect", 0), parent, bounds, 4) ||
+            !read(getSpacing, group, &spacing, 1)) return;
+        float gap = panorama_font_labels::musicTitleGap(bounds[2]);
+        if (!(gap > 0.0f) || std::fabs(spacing - gap) <= 0.05f) return;
+        const bool useReplacement = true;
+        for (void* label : labels) updateFont(label, false, &useReplacement);
+        void* spacingArgs[] = {&gap};
+        runtimeInvoke(setSpacing, group, spacingArgs, &error);
+        if (error) return;
+        void* rebuildArgs[] = {parent};
+        runtimeInvoke(rebuild, nullptr, rebuildArgs, &error);
+        if (error) LOGE("Cannot rebuild 360 LIVE music-page title");
+        return;
+    }
     float parentBounds[4], bounds[2][4], pivot[2], localPosition[3];
     static const auto getLocal = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "get_localPosition", 0);
     if (!read(rect("get_rect", 0), parent, parentBounds, 4) || parentBounds[2] <= 0 ||
@@ -89,9 +114,9 @@ void fitPanoramaLabels(void* self) {
     const float height = originalFontValue(labels[0], "panorama_height", std::max(bounds[0][3], bounds[1][3]));
     if (!(height > 0)) return;
     float widths[2];
-    const bool useRhr = true;
+    const bool useReplacement = true;
     for (int i = 0; i < 2; ++i) {
-        updateFont(labels[i], false, &useRhr);
+        updateFont(labels[i], false, &useReplacement);
         // All additional spacing/margins are zero, making preferred width
         // proportional to font size. No reset to 40 and no per-frame dirty loop.
         float zero = 0, margin[4] = {};
