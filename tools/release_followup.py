@@ -214,7 +214,7 @@ def main():
     prune = commands.add_parser('cleanup')
     prune.add_argument('--repository', required=True)
     prune.add_argument('--current-tag', required=True)
-    prune.add_argument('--keep', type=int, default=5)
+    prune.add_argument('--keep', type=int, default=3)
     prune.add_argument('--config', type=Path, required=True)
     prune.add_argument('--apply', action='store_true')
     args = parser.parse_args()

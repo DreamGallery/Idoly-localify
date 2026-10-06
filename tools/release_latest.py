@@ -45,8 +45,7 @@ def notes(repository, text_tag, plugin):
     else:
         lines += ['尚无正式插件版本。', '']
     lines += ['## 最新文本', '', f'当前版本：[`{text_tag}`]({base}/tag/{text_tag})', '',
-              f'插件文本更新地址：`{base}/download/latest/manifest.json`', '',
-              '本页附件会随文本更新；更新后请重启游戏以载入 MasterDB。']
+              f'插件文本更新地址：`{base}/download/latest/manifest.json`']
     return '\n'.join(lines) + '\n'
 
 

@@ -30,7 +30,7 @@ def release_exists(repo, tag):
     except RuntimeError:
         raise RuntimeError('Cannot inspect releases; check GitHub access before retrying') from None
 
-TEXT_RELEASE_NOTES = '自动校验的本地化资源。文本更新后请重启游戏以载入 MasterDB 更新。\n'
+TEXT_RELEASE_NOTES = '自动校验的本地化文本资源，更新后需重启游戏以载入 MasterDB 更新（如有）。\n'
 
 
 def plugin_release_notes(project, version):
