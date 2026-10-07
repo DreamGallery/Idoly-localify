@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 import shutil
@@ -138,10 +139,31 @@ class TranslationBranchAdvanced(ValueError):
     """The validated snapshot lost a race; rebuild against newer collaboration."""
 
 
+def safe_git_diagnostic(message):
+    message = str(message or '')
+    for name, value in os.environ.items():
+        if len(value) >= 4 and re.search(r'TOKEN|PASSWORD|SECRET|KEY', name, re.I):
+            message = message.replace(value, '***')
+    message = re.sub(r'(https?://)[^/\s]+@', r'\1***@', message)
+    message = re.sub(r'\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)', '***', message)
+    return message.strip()[-4000:]
+
+
+class GitCommandError(subprocess.CalledProcessError):
+    def __str__(self):
+        detail = self.stderr or self.stdout or 'Git returned no diagnostic output'
+        return f'Git failed (exit status {self.returncode}): {detail}'
+
+
 def repository_git(repository, *args):
-    return subprocess.run(['git', '-C', str(repository), '-c', 'core.quotepath=false', '-c', 'credential.helper=',
-                           '-c', 'credential.helper=!gh auth git-credential', *args], check=True,
-                          text=True, capture_output=True).stdout.strip()
+    try:
+        return subprocess.run(['git', '-C', str(repository), '-c', 'core.quotepath=false', '-c', 'credential.helper=',
+                               '-c', 'credential.helper=!gh auth git-credential', *args], check=True,
+                              text=True, capture_output=True).stdout.strip()
+    except subprocess.CalledProcessError as exc:
+        raise GitCommandError(exc.returncode, ['git'],
+                              output=safe_git_diagnostic(exc.stdout),
+                              stderr=safe_git_diagnostic(exc.stderr)) from None
 
 
 def refresh_collaboration_checkout(repository, expected_head, branch='main'):

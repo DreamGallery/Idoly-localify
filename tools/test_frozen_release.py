@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ import unittest
 from unittest.mock import patch
 import frozen_release as frozen
 import release_translations as release
+from export_translation_sources import safe_git_diagnostic
 
 
 class FrozenBatchTests(unittest.TestCase):
@@ -194,6 +196,25 @@ class FrozenBatchTests(unittest.TestCase):
         self.assertIn(relative, frozen.projection(self.collab)[0])
         record['source_change']['status'] = 'needs-confirmation'; path.write_text(json.dumps(record))
         self.assertNotIn(relative, frozen.projection(self.collab)[0])
+
+    def test_rejected_push_reports_remote_reason_without_publishing(self):
+        self.story()
+        receipt = self.prepare()
+        hook = self.remote / 'hooks/pre-receive'
+        hook.write_text('#!/bin/sh\necho "fixture publication rejected" >&2\nexit 1\n')
+        hook.chmod(0o755)
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            frozen.commit_batch(self.main, self.stage, self.base, receipt)
+        self.assertIn('fixture publication rejected', str(raised.exception))
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main'), self.base)
+
+    def test_git_diagnostics_redact_credentials_before_truncation(self):
+        with patch.dict(os.environ, {'GH_TOKEN': 'test-private-token'}):
+            result = safe_git_diagnostic('test-private-token https://user:password@github.com/repo '
+                                         'ghp_fakeCredential github_pat_fakeCredential denied')
+        for value in ('test-private-token', 'password', 'ghp_fakeCredential', 'github_pat_fakeCredential'):
+            self.assertNotIn(value, result)
+        self.assertIn('denied', result)
 
     def test_text_release_creation_binds_exact_main_commit_and_rejects_wrong_tag(self):
         asset = self.write(self.root, 'text-update.zip', 'archive')
