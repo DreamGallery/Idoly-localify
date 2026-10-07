@@ -48,11 +48,22 @@ def plugin_release_notes(project, version):
             '- 本页附件是本地化插件；文本资源请在游戏内通过插件更新。\n')
 
 
-def publish(repo, tag, assets, latest, dry_run, *, notes=None):
+def publish(repo, tag, assets, latest, dry_run, *, notes=None, target_commit=None):
     if dry_run:
         return {'tag': tag, 'assets': [p.name for p in assets], 'published': False}
+    if target_commit is not None:
+        from release_followup import GitHub
+        if not re.fullmatch(r'[0-9a-f]{40,64}', target_commit):
+            raise ValueError('Text publication requires an exact main commit')
+        client = GitHub(repo)
+        tagged_ref = client.request('GET', f'git/ref/tags/{tag}', missing_ok=True)
+        tagged = client.request('GET', f'commits/{tag}') if tagged_ref else None
+        if tagged is not None and tagged.get('sha') != target_commit:
+            raise ValueError('Existing text tag points to a different main commit')
     existing = release_exists(repo, tag)
     missing = list(assets)
+    if existing and target_commit and existing.get('draft') and existing.get('target_commitish') != target_commit:
+        raise ValueError('Existing text draft targets a different main commit')
     if existing:
         remote_names = {item['name'] for item in existing.get('assets', [])}
         expected_names = {asset.name for asset in assets}
@@ -78,7 +89,8 @@ def publish(repo, tag, assets, latest, dry_run, *, notes=None):
     try:
         if not existing:
             run(['gh', 'release', 'create', tag, '--repo', repo, '--draft',
-                 '--title', tag, '--notes-file', notes_path])
+                 '--title', tag, '--notes-file', notes_path,
+                 *(['--target', target_commit] if target_commit else [])])
         # Draft is invisible to clients until every asset uploads successfully.
         for asset in missing:
             run(['gh', 'release', 'upload', tag, asset, '--repo', repo])
@@ -111,7 +123,7 @@ def release_output(key, result, dry_run):
         stream.write(f'{key}={tag}\n')
 
 
-def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run):
+def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run, *, target_commit=None):
     from release_latest import publish_latest
     results = []
     if apk:
@@ -119,12 +131,43 @@ def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dr
         results.append(result)
         release_output('plugin_tag', result, dry_run)
     result = publish(repo, 'text-' + text_version,
-                     [output / 'text-update.zip', output / 'manifest.json'], False, dry_run)
+                     [output / 'text-update.zip', output / 'manifest.json'], False, dry_run, target_commit=target_commit)
     results.append(result)
     results.append(publish_latest(repo, output, 'text-' + text_version, dry_run))
     # Retention starts only after the mutable entry points to this complete version.
     release_output('text_tag', result, dry_run)
     return results
+
+def resume_frozen_publication(repo, repository, work):
+    """A committed batch is resumed before fetching sources or translating anew."""
+    from frozen_release import load_receipt, receipt_commit, cached_assets
+    receipt = load_receipt(repository)
+    if receipt is None: return False
+    text_tag = 'text-' + receipt['text_version']
+    text = release_exists(repo, text_tag)
+    latest = release_exists(repo, 'latest')
+    expected = {k: v for k, v in receipt['assets'].items() if k in ('manifest.json', 'text-update.zip')}
+    def complete(release):
+        assets = {a['name']: a.get('digest') for a in (release or {}).get('assets', [])}
+        return bool(release and not release.get('draft') and all(assets.get(k) == 'sha256:' + v for k, v in expected.items()))
+    if complete(text) and complete(latest):
+        from release_followup import GitHub
+        expected_commit = receipt_commit(repository)
+        client = GitHub(repo)
+        if client.request('GET', f'commits/{text_tag}').get('sha') != expected_commit:
+            raise ValueError('Published text tag differs from its frozen receipt commit')
+        if client.request('GET', 'commits/latest').get('sha') == expected_commit:
+            return False
+    output = cached_assets(work, receipt)
+    apk = output / receipt['plugin_asset'] if receipt.get('plugin_asset') else None
+    notes = (output / 'plugin-notes.txt').read_text() if apk else None
+    commit = receipt_commit(repository)
+    results = publish_built_assets(repo, receipt['plugin_version'], apk, notes,
+        output, receipt['text_version'], False, target_commit=commit)
+    print(json.dumps({'schema_version': 1, 'resumed': True, 'cutoff': receipt['cutoff'],
+                      'source_commit': commit, 'releases': results}))
+    return True
+
 
 def plugin_version(project):
     source = (project / 'app/build.gradle').read_text()
@@ -172,6 +215,22 @@ def prepare_story_csv(source, csv_dir, toolkit):
     for path in sorted(source.glob('adv_*.txt')):
         if path.is_symlink(): raise ValueError('Symlinked original script')
         toolkit.export_file(path, csv_dir / (path.stem + '.csv'))
+
+
+def replace_release_data(repository, project):
+    """Replace the six data trees so intentional deletions cannot reappear."""
+    from import_collaboration import copy_data
+    from export_translation_sources import JSON_PATHS
+    for directory in JSON_PATHS:
+        source, target = repository / directory, project / 'translations' / directory
+        if not source.is_dir() or source.is_symlink():
+            raise ValueError('Missing or symlinked release data tree')
+        if any(p.is_symlink() for p in (target, *target.parents) if p == project or project in p.parents):
+            raise ValueError('Symlinked release workspace')
+    for directory in JSON_PATHS:
+        target = project / 'translations' / directory
+        if target.exists(): shutil.rmtree(target)
+    copy_data(repository, project)
 
 
 def refresh_and_import_machine(repository, source, csv_dir, project, command, *,
@@ -263,19 +322,6 @@ def install_collaboration_stage(repository, stage, paths, migration_paths, basel
     return sorted(changes)
 
 
-def retry_collaboration_release(repository, expected_head, branch, finalize, max_attempts=3):
-    """Reuse translated machine data; recompile the latest human layer on races."""
-    from export_translation_sources import TranslationBranchAdvanced, refresh_collaboration_checkout
-    for attempt in range(1, max_attempts + 1):
-        expected_head = refresh_collaboration_checkout(repository, expected_head, branch)
-        try:
-            return finalize(expected_head)
-        except TranslationBranchAdvanced:
-            if attempt == max_attempts:
-                raise TranslationBranchAdvanced(f'Collaboration kept changing across {max_attempts} build attempts; no stale release published') from None
-            print(f'Collaboration advanced during build; refreshing human data and rebuilding ({attempt + 1}/{max_attempts})', flush=True)
-
-
 def configure_api(config):
     """Actions env (manual input/repository vars) wins over local compatibility config."""
     base = os.environ.get('OPENAI_API_BASE') or config.get('openai_api_base') or ''
@@ -312,7 +358,7 @@ def main():
         os.execv(configured_python, [configured_python, __file__, *sys.argv[1:]])
     parser = argparse.ArgumentParser(description=__doc__, parents=[config_parser])
     for flag in ('repository-dir', 'adv-dir', 'toolkit-dir', 'translator-dir', 'work-dir',
-                 'solis-dir', 'notice-account', 'font-bundle'):
+                 'solis-dir', 'notice-account', 'font-bundle', 'collaboration-dir'):
         parser.add_argument('--' + flag, type=Path, default=config.get(flag.replace('-', '_')))
     parser.add_argument('--repository', default='DreamGallery/Idoly-localify-translations')
     parser.add_argument('--project', type=Path, default=ROOT)
@@ -325,13 +371,13 @@ def main():
     parser.add_argument('--no-translate', action='store_true')
     parser.add_argument('--initialize-collector-day', action='store_true',
                         default=config.get('initialize_collector_day', False))
-    parser.add_argument('--data-branch', default='main')
+    parser.add_argument('--data-branch', default='main', choices=['main'])
     parser.add_argument('--skip-apk', action='store_true', help='Explicit text-only run')
     args = parser.parse_args()
     # Child tools run in the project directory. Resolve caller-relative paths
     # before changing their working directory.
     for key in ('project', 'repository_dir', 'adv_dir', 'toolkit_dir', 'translator_dir',
-                'work_dir', 'solis_dir', 'notice_account', 'font_bundle'):
+                'work_dir', 'solis_dir', 'notice_account', 'font_bundle', 'collaboration_dir'):
         value = getattr(args, key)
         if value is not None:
             setattr(args, key, Path(value).expanduser().resolve())
@@ -340,6 +386,8 @@ def main():
     for key in ('repository_dir', 'adv_dir', 'toolkit_dir', 'translator_dir', 'work_dir',
                 'solis_dir', 'notice_account', 'font_bundle', 'app_version'):
         if not getattr(args, key): parser.error(f'--{key.replace("_", "-")} or runner config value required')
+    if not args.preflight_only and not args.collaboration_dir:
+        parser.error('--collaboration-dir is required for frozen releases')
     for name, key in [('IDOLY_TOOLKIT_CONFIG', 'toolkit_config'),
                       ('IDOLY_FIREBASE_SETTINGS_FILE', 'firebase_settings'),
                       ('IDOLY_OCTO_SETTINGS_FILE', 'octo_settings'),
@@ -370,6 +418,8 @@ def main():
         return
     project, work = args.project.resolve(), args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run and resume_frozen_publication(args.repository, args.repository_dir, work):
+        return
     csv_dir, source = work / 'csv', work / 'source'
     source.mkdir(parents=True, exist_ok=True)
     for original in (args.adv_dir / 'Resource').glob('adv_*.txt'):
@@ -388,9 +438,13 @@ def main():
                       IDOLY_TRANSLATOR_DIR=str(args.translator_dir.resolve()),
                       IDOLY_STORY_SOURCE_DIR=str(source), IDOLY_STORY_CSV_DIR=str(csv_dir),
                       IDOLY_STORY_OUTPUT_DIR=str(work / 'compiled-story'))
-    from import_collaboration import copy_data, import_stories, validate_story_coverage
+    from import_collaboration import import_stories, validate_story_coverage
     base_revision = run(['git', '-C', args.repository_dir, 'rev-parse', 'HEAD'], capture=True).strip()
-    copy_data(args.repository_dir, project)
+    from frozen_release import stage_cutoff, commit_batch, cache_assets
+    cutoff = run(['git', '-C', args.collaboration_dir, 'rev-parse', 'HEAD'], capture=True).strip()
+    frozen = work / 'cutoff-data'
+    collaboration_baseline = stage_cutoff(args.repository_dir, args.collaboration_dir, frozen)
+    replace_release_data(frozen, project)
     from workspace_paths import load_module
     prepare_story_csv(source, csv_dir, load_module('HoshimiToolkit', 'src.adv_csv'))
     refresh_summary = work / 'refresh-summary.json'
@@ -403,7 +457,7 @@ def main():
                '--summary', refresh_summary, '--accept-story-rebase']
     if args.initialize_collector_day: command.append('--initialize-collector-day')
     try:
-        receipt = refresh_and_import_machine(args.repository_dir, source, csv_dir, project,
+        receipt = refresh_and_import_machine(frozen, source, csv_dir, project,
                                               command, offline=args.offline,
                                               translate=not args.no_translate)
         (work / 'collaboration-initial.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
@@ -415,14 +469,13 @@ def main():
     # Snapshot machine results before applying human title overrides for runtime.
     machine = work / 'machine-export'
     if machine.exists(): shutil.rmtree(machine)
-    from export_translation_sources import JSON_PATHS, export_sources, sync_git
+    from export_translation_sources import JSON_PATHS, export_sources
     for relative in JSON_PATHS:
         origin = project / 'translations' / relative
         if origin.exists(): shutil.copytree(origin, machine / 'translations' / relative)
     shutil.copytree(csv_dir, machine / 'csv')
     skip_stories = [stem for stem, value in receipt['stories'].items() if value['layer'] != 'ai']
-    # Freeze executable migration code from the original trusted checkout.
-    # Subsequent refreshes import only newer collaboration data.
+    # Executable migration code comes only from the trusted main checkout.
     original_migration = args.repository_dir / 'scripts/story_migration.py'
     if original_migration.is_symlink() or not original_migration.is_file():
         raise ValueError('Trusted story migration script is missing')
@@ -430,14 +483,13 @@ def main():
     shutil.copyfile(original_migration, migration_script)
 
     def finalize(snapshot_revision):
-        # Start each attempt from the machine snapshot, not the previous human
-        # overlay. Revoked/edited titles must not leak into the next attempt.
-        copy_data(machine / 'translations', project)
+        # Apply the human layer only after the machine snapshot is complete.
+        replace_release_data(machine / 'translations', project)
         if csv_dir.is_symlink(): raise ValueError('Symlinked release CSV directory')
         shutil.rmtree(csv_dir)
         shutil.copytree(machine / 'csv', csv_dir)
-        stage, migration_receipt, migration_baseline = prepare_collaboration_stage(
-            args.repository_dir, source, csv_dir, work, migration_script=migration_script)
+        stage, _, _ = prepare_collaboration_stage(
+            frozen, source, csv_dir, work, migration_script=migration_script)
         receipt = import_stories(stage, csv_dir, source, csv_dir, project, human_only=True)
         validate_story_coverage(csv_dir)
         (work / 'collaboration-final.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
@@ -452,6 +504,14 @@ def main():
         from build_text_update import build
         output = project / '.analysis/scheduled-release'
         manifest = build(project, output, 'https://github.com/' + args.repository,
+                         include_stories=True, github_repository=args.repository,
+                         include_master_blobs=True, master_tag=master_tag)
+        content_version = manifest['version']
+        # Stable for the same frozen inputs; timestamps and refresh logs are not
+        # part of the identity. Bind distinct data batches to distinct text tags.
+        batch_version = hashlib.sha256((snapshot_revision + ':' + cutoff + ':' +
+            content_version).encode()).hexdigest()[:16]
+        manifest = build(project, output, 'https://github.com/' + args.repository, version=batch_version,
                          include_stories=True, github_repository=args.repository,
                          include_master_blobs=True, master_tag=master_tag)
         # Build every necessary asset before publishing anything.
@@ -471,23 +531,39 @@ def main():
             apk = output / f'idoly-localify-{version}.apk'
             shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)
             run([args.python, project / 'tools/check_release_apk.py', apk], project)
-        exported = export_sources(machine, machine / 'csv', source, stage,
+        export_sources(machine, machine / 'csv', source, stage,
                                   skip_stories, summary, apply=True)
-        migration_paths = migration_receipt['changed_paths']
-        changed = install_collaboration_stage(args.repository_dir, stage,
-            set(exported) | set(migration_paths), migration_paths, migration_baseline,
-            apply=False)
-        data_commit = None if args.dry_run else sync_git(args.repository_dir, changed,
-            snapshot_revision, args.data_branch, migration_paths=migration_paths, source_dir=stage)
+        from frozen_release import data_tree, projection, write_tree
+        # Source migration may demote stale formal work into drafts. Those drafts
+        # stay in collaboration; only valid completed layers reach published main.
+        normalized, _ = projection(stage)
+        write_tree(stage, {p: normalized.get(p) for p in set(data_tree(stage)) | set(normalized)})
+        from frozen_release import unchanged_batch
+        if unchanged_batch(args.repository_dir, stage, content_version):
+            return {'unchanged': True, 'apk': apk, 'apk_notes': apk_notes, 'version': version}
+        assets = cache_assets(work, manifest['version'], output, apk, apk_notes)
+        batch = {'schema_version': 1, 'cutoff': cutoff, 'main_parent': snapshot_revision,
+                 'collaboration_baseline': collaboration_baseline, 'published_data': {},
+                 'text_version': manifest['version'], 'content_version': content_version, 'assets': assets,
+                 'plugin_version': version, 'plugin_asset': apk.name if apk else None}
+        data_commit, changed = (None, []) if args.dry_run else commit_batch(
+            args.repository_dir, stage, snapshot_revision, batch, args.data_branch)
         return manifest, apk, apk_notes, data_commit, changed, output, version
 
-    if args.dry_run:
-        finalized = finalize(base_revision)
-    else:
-        finalized = retry_collaboration_release(args.repository_dir, base_revision, args.data_branch, finalize)
+    # Collaboration is never refreshed during compilation or publication. A main
+    # race fails safely, with no force push and no implicit intake of newer work.
+    finalized = finalize(base_revision)
+    if isinstance(finalized, dict) and finalized.get('unchanged'):
+        if finalized['apk']:
+            result = publish(args.repository, 'v' + finalized['version'], [finalized['apk']],
+                             False, args.dry_run, notes=finalized['apk_notes'])
+            release_output('plugin_tag', result, args.dry_run)
+        print(json.dumps({'schema_version': 1, 'unchanged': True, 'cutoff': cutoff, 'dry_run': args.dry_run}))
+        return
     manifest, apk, apk_notes, data_commit, changed, output, version = finalized
     results = publish_built_assets(args.repository, version, apk, apk_notes,
-                                  output, manifest['version'], args.dry_run)
+                                  output, manifest['version'], args.dry_run,
+                                  target_commit=data_commit)
     report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run,
               'releases': results, 'source_changed_files': len(changed), 'source_commit': data_commit, 'archive_sha256': manifest['archive']['sha256']}
     (work / 'release-report.json').write_text(json.dumps(report, indent=2) + '\n')

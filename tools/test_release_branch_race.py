@@ -1,7 +1,4 @@
 """Exercise real non-fast-forward races without network or force pushes."""
-import csv
-import hashlib
-import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -9,8 +6,6 @@ import unittest
 from unittest.mock import patch
 
 import export_translation_sources as exports
-import import_collaboration as imports
-import release_translations as release
 
 
 class ReleaseBranchRaceTests(unittest.TestCase):
@@ -71,52 +66,6 @@ class ReleaseBranchRaceTests(unittest.TestCase):
         worktrees = self.git('worktree', 'list', '--porcelain', cwd=self.repository)
         self.assertEqual(worktrees.count('worktree '), 1)
 
-    def test_push_race_rebuilds_reviewed_story_and_master_title_before_commit(self):
-        stem = 'adv_main_01_01_01'
-        relative = 'story/reviewed/main/' + stem + '.csv'
-        source = self.root / 'source'; source.mkdir()
-        (source / (stem + '.txt')).write_text('original script')
-        rows = [['0:title:0', '', '1話 始まり', ''],
-                ['info', stem + '.txt', hashlib.sha256(b'original script').hexdigest(), ''],
-                ['译者', '', '', '']]
-        original_csv = self.root / 'csv'; original_csv.mkdir()
-        with (original_csv / (stem + '.csv')).open('w', newline='') as stream:
-            writer = csv.writer(stream); writer.writerow(imports.COLUMNS); writer.writerows(rows)
-        record = {'schema_version': 1, 'file_id': stem, 'proofread': {'state': '完成', 'revision': 1},
-                  'artifacts': {'proofread_csv': {'path': relative}}}
-        self.write(self.editor, 'records/' + stem + '.json', json.dumps(record))
-        csv_text = (original_csv / (stem + '.csv')).read_text().replace('1話 始まり,', '1話 始まり,1话 旧标题')
-        initial_human = self.push_edit(relative, csv_text)
-        project = self.root / 'project'
-        self.write(project, 'translations/story-metadata/catalog.json',
-                   json.dumps({'stories': {'story-1': {'assets': [stem]}}}))
-        self.write(project, 'translations/master/orig/Story.json', json.dumps({'story-1': {'name': '始まり'}}))
-        attempts = []
-        injected = False
-        def intercept(command, **kwargs):
-            nonlocal injected
-            if 'push' in command and not injected:
-                injected = True
-                self.push_edit(relative, csv_text.replace('旧标题', '最新校对'))
-            self.assertNotIn('--force', command if 'push' in command else [])
-            return self.execute(command, **kwargs)
-        def finalize(revision):
-            self.write(project, 'translations/master/zh-Hans/Story.json',
-                       json.dumps({'story-1': {'name': '机器标题'}}))
-            imports.import_stories(self.repository, original_csv, source, self.root / 'runtime',
-                                   project, human_only=True)
-            title = json.loads((project / 'translations/master/zh-Hans/Story.json').read_text())['story-1']['name']
-            attempts.append((revision, title))
-            return exports.sync_git(self.repository, ['notice/zh-Hans.json'], revision, source_dir=self.stage)
-        with patch.object(exports.subprocess, 'run', side_effect=intercept):
-            result = release.retry_collaboration_release(self.repository, self.initial, 'main', finalize)
-        self.assertEqual([title for _, title in attempts], ['旧标题', '最新校对'])
-        self.assertEqual(attempts[0][0], initial_human)
-        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main'), result)
-        self.assertIn('最新校对', self.git('--git-dir', str(self.remote), 'show', 'main:' + relative))
-        self.assertEqual(self.git('status', '--porcelain', cwd=self.repository), '')
-        self.assertEqual(self.git('worktree', 'list', '--porcelain', cwd=self.repository).count('worktree '), 1)
-
     def test_conflicting_machine_inputs_stop_before_checkout_or_overwrite(self):
         self.push_edit('notice/zh-Hans.json', '{"notice":"human correction"}')
         with self.assertRaisesRegex(ValueError, 'Machine/source inputs changed'):
@@ -141,18 +90,6 @@ class ReleaseBranchRaceTests(unittest.TestCase):
         self.assertEqual(self.git('status', '--porcelain', cwd=self.repository), '')
         self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main'), self.initial)
 
-    def test_continuous_edits_are_bounded_and_validation_errors_not_retried(self):
-        with patch.object(exports, 'refresh_collaboration_checkout', return_value=self.initial), \
-             patch('builtins.print'), \
-             patch.object(exports, 'sync_git', side_effect=exports.TranslationBranchAdvanced('race')) as finalize:
-            with self.assertRaisesRegex(exports.TranslationBranchAdvanced, '3 build attempts'):
-                release.retry_collaboration_release(self.repository, self.initial, 'main', finalize)
-            self.assertEqual(finalize.call_count, 3)
-        with patch.object(exports, 'refresh_collaboration_checkout', return_value=self.initial), \
-             patch.object(exports, 'sync_git', side_effect=ValueError('invalid translation')) as finalize:
-            with self.assertRaisesRegex(ValueError, 'invalid translation'):
-                release.retry_collaboration_release(self.repository, self.initial, 'main', finalize)
-            finalize.assert_called_once()
 
 
 if __name__ == '__main__':
