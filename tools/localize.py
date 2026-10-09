@@ -281,6 +281,20 @@ def build(source_path: Path, translation_path: Path, output_path: Path, dump: bo
                     add_text(key, translated, "ui-text")
                 else:
                     result[kind][key] = translated
+    # This prompt inserts an untranslated work name after I18n resolution.
+    # Expand only complete prompts for reviewed names, never the bare name.
+    duration_key = "activity.characterSelect.duration"
+    duration_source = source.get("i18n", {}).get(duration_key, "")
+    duration_target = translation.get("i18n", {}).get(duration_key, "")
+    if (duration_source.count("{0}") == 1 and duration_target.count("{0}") == 1 and
+            "{" not in duration_source.replace("{0}", "") and
+            "{" not in duration_target.replace("{0}", "")):
+        for name, translated_name in result["home_activity_names"].items():
+            rendered = duration_target.replace("{0}", translated_name)
+            for template in (duration_source, duration_target):
+                original = template.replace("{0}", name)
+                if original != rendered:
+                    add_text(original, rendered, "activity-duration")
     # The notice list omits the preview marker from its card title even when
     # the server-supplied title includes it. Keep an explicit translation for
     # the short title authoritative when one exists.

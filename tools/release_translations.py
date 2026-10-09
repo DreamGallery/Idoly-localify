@@ -35,13 +35,12 @@ TEXT_RELEASE_NOTES = '自动校验的本地化文本资源，更新后需重启�
 
 def plugin_release_notes(project, version):
     """Require notes for the exact APK version from the trusted source checkout."""
-    changelog = (project / 'CHANGELOG.md').read_text(encoding='utf-8')
-    sections = re.split(r'^## ([^\n]+)\n', changelog, flags=re.MULTILINE)
-    entries = [sections[i + 1].strip() for i in range(1, len(sections), 2)
-               if sections[i].strip() == version]
-    if len(entries) != 1 or not entries[0]:
-        raise ValueError(f'Missing or duplicate plugin changelog for {version}')
-    return (f'## 插件 {version}\n\n' + entries[0] +
+    release = json.loads((project / 'config/plugin-release.json').read_text(encoding='utf-8'))
+    notes = release.get('notes')
+    if (release.get('version') != version or not isinstance(notes, list) or not notes
+            or any(not isinstance(note, str) or not note.strip() for note in notes)):
+        raise ValueError(f'Missing or invalid plugin release notes for {version}')
+    return (f'## 插件 {version}\n\n' + '\n'.join('- ' + note.strip() for note in notes) +
             '\n\n### 安装与更新\n\n'
             '- LSPosed：安装本页 APK，启用模块并将作用域设为《偶像荣耀》，然后重启游戏。\n'
             '- LSPatch：使用新版插件重新修补游戏 APK，再覆盖安装。\n'

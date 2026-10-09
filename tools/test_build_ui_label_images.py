@@ -64,7 +64,13 @@ class LabelMeshTests(unittest.TestCase):
         for y in range(10):
             for x in range(20):
                 expected = (255, 255, 255, 255) if 2 < x < 7 and 2 < y < 7 else image.getpixel((x, y))
-                self.assertEqual(result.getpixel((x, y)), expected)
+                actual = result.getpixel((x, y))
+                # The backing layer may carry white RGB under zero alpha;
+                # exterior transparency and all visible pixels must stay intact.
+                if expected[3] == 0:
+                    self.assertEqual(actual[3], 0)
+                else:
+                    self.assertEqual(actual, expected)
 
     def test_solid_background_repair_preserves_outer_edges_and_alpha(self):
         background = [64, 204, 255, 255]

@@ -55,6 +55,7 @@ final class LocalifyOverlayUi {
     };
 
     private LocalifyOverlayUi() {}
+    static boolean captureBusy() { return capturing || exporting; }
 
     static void configure(File directory) {
         dataDir = directory;
@@ -423,6 +424,14 @@ final class LocalifyOverlayUi {
     }
 
     private static void toggleCapture(Activity activity) {
+        if (LocalDataUi.busy()) {
+            Toast.makeText(activity, "请等待文件清理完成", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!TranslationPreferences.active()) {
+            Toast.makeText(activity, "请先开启翻译并重启游戏，再进行采集", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (exporting) return;
         if (capturing) {
             stopCapture(activity, false);
@@ -513,6 +522,7 @@ final class LocalifyOverlayUi {
         Toast.makeText(activity, remote ? "正在检查文本更新" : "正在载入本地文本",
             Toast.LENGTH_SHORT).show();
         TextHotUpdater.run(dataDir, remote, result -> MAIN.post(() -> {
+            if (remote && result.success) TranslationPreferences.downloaded(activity);
             UpdateChecker.textInstalled(activity.getApplicationContext(), result);
             LocalifySettingsUi.refreshUpdateStatus();
             if (!activity.isFinishing() && !activity.isDestroyed() && current.get() == activity)
@@ -520,5 +530,6 @@ final class LocalifyOverlayUi {
                     .setTitle(result.success ? "文本更新完成" : "文本更新失败")
                     .setMessage(result.message).setPositiveButton("确定", null).show();
         }));
+        LocalifySettingsUi.refreshUpdateStatus();
     }
 }

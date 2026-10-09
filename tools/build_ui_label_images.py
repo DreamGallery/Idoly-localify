@@ -23,7 +23,7 @@ def digest(data: bytes) -> str:
     return sha256(data).hexdigest()
 
 
-def fill_enclosed_transparency(image: Image.Image, color: list[int]) -> Image.Image:
+def fill_enclosed_transparency(image: Image.Image, color: list[int], gap_radius: int = 0) -> Image.Image:
     """Back enclosed glyph counters without painting the exterior background."""
     if len(color) != 4 or color[3] != 255:
         raise ValueError('Enclosed label background must be opaque RGBA')
@@ -31,12 +31,26 @@ def fill_enclosed_transparency(image: Image.Image, color: list[int]) -> Image.Im
     # A transparent border ensures even edge-touching strokes are floodable.
     width, height = image.size
     occupied = image.getchannel('A').point(lambda value: 255 if value else 0)
+    if not isinstance(gap_radius, int) or gap_radius < 0:
+        raise ValueError('Label gap radius must be a nonnegative integer')
+    if gap_radius:
+        # Close narrow cracks in a continuous outline without expanding its
+        # convex outer boundary. The glyph fill is drawn separately above it.
+        kernel = gap_radius * 2 + 1
+        closed = occupied.filter(ImageFilter.MaxFilter(kernel)).filter(ImageFilter.MinFilter(kernel))
+    else:
+        closed = occupied
     outside = Image.new('L', (width + 2, height + 2))
-    outside.paste(occupied, (1, 1))
+    outside.paste(closed, (1, 1))
     ImageDraw.floodfill(outside, (0, 0), 128)
     holes = outside.crop((1, 1, width + 1, height + 1)).point(lambda value: 255 if value == 0 else 0)
-    result = image.copy()
-    result.paste(tuple(color), (0, 0, width, height), holes)
+    # Back the interior, including its partially transparent antialiased pixels.
+    # Filling only alpha-zero pixels leaves a grey fringe inside a white counter.
+    # Keep one supersampled edge pixel so the exterior retains its antialiasing.
+    interior = ImageChops.lighter(closed, holes).filter(ImageFilter.MinFilter(3))
+    result = Image.new('RGBA', image.size, tuple(color))
+    result.putalpha(interior)
+    result.alpha_composite(image)
     return result
 
 
@@ -129,17 +143,44 @@ def render_label(size: tuple[int, int], item: dict, font_path: Path,
                 top += bbox[3] - bbox[1] + gap
         else:
             raise ValueError('Unknown label orientation')
+        adjusted = []
         for text, x, y in placements:
             if item.get('align') == 'left':
                 bbox = draw.textbbox((0, 0), text, font=font)
                 x = (max((stroke['width'] for stroke in strokes), default=0) + 3) * scale - bbox[0]
+            adjusted.append((text, x, y))
+        if item.get('closed_outline'):
+            # Render each outline for the whole label before adding the next
+            # layer. Adjacent characters share a continuous sticker silhouette;
+            # the original glyph counters remain visible against its white core.
             for stroke in strokes:
+                outline = Image.new('RGBA', layer.size)
+                outline_draw = ImageDraw.Draw(outline)
+                for text, x, y in adjusted:
+                    outline_draw.text((x, y), text, font=font, fill=tuple(stroke['color']),
+                                      stroke_width=round(stroke['width'] * scale),
+                                      stroke_fill=tuple(stroke['color']))
+                layer.alpha_composite(fill_enclosed_transparency(outline, stroke['color']))
+            draw = ImageDraw.Draw(layer)
+        for text, x, y in adjusted:
+            for stroke in ([] if item.get('closed_outline') else strokes):
                 draw.text((x, y), text, font=font, fill=tuple(fill),
                           stroke_width=round(stroke['width'] * scale), stroke_fill=tuple(stroke['color']),
                           spacing=spacing, align='center')
             draw.text((x, y), text, font=font, fill=tuple(fill), spacing=spacing, align='center')
         if 'enclosed_background_rgba' in item:
-            layer = fill_enclosed_transparency(layer, item['enclosed_background_rgba'])
+            backed = fill_enclosed_transparency(layer, item['enclosed_background_rgba'],
+                                               round(item.get('outline_gap_fill', 0) * scale))
+            if 'enclosed_background_boxes' in item:
+                for box in item['enclosed_background_boxes']:
+                    if (len(box) != 4 or any(type(value) is not int for value in box)
+                            or not 0 <= box[0] < box[2] <= width
+                            or not 0 <= box[1] < box[3] <= height):
+                        raise ValueError('Enclosed label background exceeds its canvas')
+                    scaled_box = tuple(value * scale for value in box)
+                    layer.paste(backed.crop(scaled_box), scaled_box)
+            else:
+                layer = backed
         image = layer.resize(size, Image.Resampling.LANCZOS)
         alpha = image.getchannel('A')
         if item.get('alpha_cutoff'):

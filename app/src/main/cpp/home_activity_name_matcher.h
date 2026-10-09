@@ -55,6 +55,32 @@ public:
 
     std::size_t size() const { return names.size(); }
 
+    bool mayMatchDuration(std::string_view text, std::string_view pattern) const {
+        std::string_view name;
+        if (!durationName(text, pattern, name)) return false;
+        for (const auto& item : names)
+            if (name == item.first || name == item.second) return true;
+        return false;
+    }
+
+    std::string translateDuration(std::string_view text, std::string_view path,
+                                  std::string_view pattern) const {
+        constexpr std::string_view target =
+            "WindowSystem/WindowRoot/ActivityWindow(Clone)/FanEventCharacterScreen(Clone)/"
+            "ScreenCanvas/ScreenRoot/ActivityCharacterSelectCommonUI/Fullscreen/"
+            "ActivityCharacterSelectCommonUpper/FadeRoot/RequiredTime/RequiredTimeTitle";
+        if (path != target) return {};
+        std::string_view name;
+        if (!durationName(text, pattern, name)) return {};
+        for (const auto& item : names) {
+            if (name != item.first) continue;
+            auto result = std::string(pattern);
+            result.replace(result.find("{0}"), 3, item.second);
+            return result;
+        }
+        return {};
+    }
+
     static bool isTargetPath(std::string_view path) {
         constexpr std::string_view workPrefix = "WindowSystem/WindowRoot/ActivityWindow(Clone)/";
         constexpr std::string_view workSuffix = "/ScreenCanvas/ScreenRoot/ActGameFooter/ActGameInfo/Level";
@@ -76,6 +102,21 @@ public:
     }
 
 private:
+    static bool durationName(std::string_view text, std::string_view pattern,
+                             std::string_view& name) {
+        const auto slot = pattern.find("{0}");
+        if (slot == std::string_view::npos || pattern.find("{", slot + 3) != std::string_view::npos ||
+            pattern.substr(0, slot).find_first_of("{}") != std::string_view::npos ||
+            pattern.substr(slot + 3).find('}') != std::string_view::npos) return false;
+        const auto prefix = pattern.substr(0, slot), suffix = pattern.substr(slot + 3);
+        if (prefix.empty() && suffix.empty()) return false;
+        if (text.size() <= prefix.size() + suffix.size() ||
+            text.substr(0, prefix.size()) != prefix ||
+            text.substr(text.size() - suffix.size()) != suffix) return false;
+        name = text.substr(prefix.size(), text.size() - prefix.size() - suffix.size());
+        return validName(name);
+    }
+
     static bool validName(std::string_view name) {
         if (name.empty() || name.size() > 64) return false;
         for (unsigned char c : name)

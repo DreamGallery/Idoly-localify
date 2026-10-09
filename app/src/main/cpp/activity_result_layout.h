@@ -60,6 +60,13 @@ inline bool aileLabel(std::string_view path) {
         receiveChild(path) == "RewardsContainer/ActivityResultRewardView(Clone)/FadeResourceThumbnail/AIleNoti/Aile";
 }
 
+inline bool trainingAileLabel(std::string_view path) {
+    constexpr std::string_view suffix =
+        "ActivityLessonReceiveThumbnailListCell(Clone)/YellThumbnail/YellIcon/YellText";
+    if (path.size() < suffix.size() || path.substr(path.size() - suffix.size()) != suffix) return false;
+    return path.size() == suffix.size() || path[path.size() - suffix.size() - 1] == '/';
+}
+
 inline bool finishAnimatedText(std::string_view path) {
     constexpr std::string_view screens[] = {
         "PromotionScreen(Clone)/", "FanEventScreen(Clone)/", "RefreshScreen(Clone)/",

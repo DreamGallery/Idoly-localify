@@ -278,6 +278,8 @@ std::atomic<bool> textCaptureEnabled{false};
 // A full/failed session remains stoppable/exportable, but no longer pays per-
 // frame hierarchy or JSON costs. Session state itself stays under dumpMutex.
 std::atomic<bool> captureAcceptingRecords{false};
+bool captureWritesPaused = false; // guarded by dumpMutex
+std::atomic<bool> legacyDumpSuppressed{false};
 std::string textCapturePath;
 std::unordered_set<std::string> capturedThisSession;
 CaptureSessionState captureSession;
@@ -407,19 +409,26 @@ std::string textObjectPath(void* object) {
 
 void dump(const char* kind, const std::string& source, const std::string& key = {}, void* textObject = nullptr) {
     std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
-    if ((!dumpEnabled && !captureAcceptingRecords.load()) || source.empty() || source.size() > 1024 * 1024 ||
+    if (((!dumpEnabled || legacyDumpSuppressed.load()) && !captureAcceptingRecords.load()) || source.empty() || source.size() > 1024 * 1024 ||
         translatedValues.find(source) != translatedValues.end()) return;
     std::lock_guard<std::mutex> lock(dumpMutex);
     const std::string identity = std::string(kind) + "\n" + key + "\n" + source;
+    if (captureWritesPaused) return;
+    const bool writeDump = dumpEnabled && !legacyDumpSuppressed.load() && dumped.count(identity) == 0;
+    const bool writeCapture = captureAcceptingRecords.load() && capturedThisSession.count(identity) == 0;
+    // Most repeated setters have already been captured. Avoid hierarchy walks
+    // and JSON serialization for records neither destination needs again.
+    if (!writeDump && !writeCapture) return;
     nlohmann::json item = {{"kind", kind}, {"source", source}};
     if (!key.empty()) item["key"] = key;
-    if (captureAcceptingRecords.load() && textObject) item["object_path"] = textObjectPath(textObject);
+    if (writeCapture && textObject) item["object_path"] = textObjectPath(textObject);
     const auto encoded = item.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
-    if (dumpEnabled && dumped.insert(identity).second) {
+    if (writeDump) {
+        dumped.insert(identity);
         std::ofstream output(dumpPath, std::ios::app);
         if (output) output << encoded;
     }
-    if (captureAcceptingRecords.load() && capturedThisSession.count(identity) == 0) {
+    if (writeCapture) {
         const bool written = captureSession.append(false, encoded, [&](const std::string& record) {
             std::ofstream capture(textCapturePath, std::ios::app);
             if (!capture) return false;
@@ -1438,6 +1447,50 @@ void sizeHeaderManagerLabel(void* self) {
     if (error) LOGE("Cannot size header manager label");
 }
 
+// The opening title is authored at 140pt in an 840x478 box, with explicit
+// line breaks and overflow enabled. Longer translations and taller replacement
+// metrics must fit that same box instead of overlapping the description.
+void fitStoryOpeningTitle(void* self) {
+    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    auto* name = static_cast<Il2CppString*>(readFontProperty(self,
+        "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
+    if (utf8(name) != "Title" || textObjectPath(self) !=
+        "WindowSystem/WindowRoot/StoryWindow(Clone)/StoryPlayerScreen(Clone)/StoryFullScreenLoading/Root/Layout/Title") return;
+    const auto property = [&](const char* key) {
+        return readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", key);
+    };
+    void* transform = property("get_rectTransform");
+    void* bounds = transform ? readFontProperty(transform,
+        "UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect") : nullptr;
+    void* sizeBox = property("get_fontSize");
+    void* autoBox = property("get_enableAutoSizing");
+    void* minimumBox = property("get_fontSizeMin");
+    void* maximumBox = property("get_fontSizeMax");
+    void* overflowBox = property("get_overflowMode");
+    if (!bounds || !sizeBox || !autoBox || !minimumBox || !maximumBox || !overflowBox) return;
+    const auto* rect = static_cast<float*>(objectUnbox(bounds));
+    const float size = *static_cast<float*>(objectUnbox(sizeBox));
+    const float minimum = *static_cast<float*>(objectUnbox(minimumBox));
+    const float maximum = *static_cast<float*>(objectUnbox(maximumBox));
+    const bool autoSize = *static_cast<bool*>(objectUnbox(autoBox));
+    if (!std::isfinite(rect[2]) || !std::isfinite(rect[3]) ||
+        std::fabs(rect[2] - 840) > .5f || std::fabs(rect[3] - 478) > .5f ||
+        !std::isfinite(size) || !std::isfinite(minimum) || !std::isfinite(maximum) ||
+        std::fabs(minimum - 18) > .1f || *static_cast<int32_t*>(objectUnbox(overflowBox)) != 0) return;
+    // Enable fitting only from the original fixed-size state. Leave TMP's
+    // fitted result alone on subsequent renders, avoiding size oscillation.
+    if (autoSize || std::fabs(size - 140) > .1f ||
+        (std::fabs(maximum - 72) > .1f && std::fabs(maximum - 140) > .1f)) return;
+    static const auto setMax = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_fontSizeMax", 1);
+    static const auto setAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_enableAutoSizing", 1);
+    if (!setMax || !setAuto) return;
+    float cap = 140; bool enabled = true; void* error = nullptr;
+    void* maxArgs[] = {&cap}; void* autoArgs[] = {&enabled};
+    runtimeInvoke(setMax, self, maxArgs, &error);
+    if (!error) runtimeInvoke(setAuto, self, autoArgs, &error);
+    if (error) LOGE("Cannot fit story opening title");
+}
+
 void hookTmpPreRender(void* self, void* method) {
     std::lock_guard<std::recursive_mutex> frameLock(dictionaryMutex);
     registerTmpUi(self);
@@ -1447,6 +1500,7 @@ void hookTmpPreRender(void* self, void* method) {
     // Resolve after set_text and again after prefab font resets, before mesh creation.
     refreshDefaultUiFont(self);
     sizeHeaderManagerLabel(self);
+    fitStoryOpeningTitle(self);
     applyStorySubtitleLayout(self);
     fitPanoramaLabels(self);
     alignGallerySearchFooter(self);
@@ -3485,11 +3539,15 @@ void* prepareFormattedUiGlyphs(void* self, void* array) {
     const auto text = converter.to_bytes(decoded);
     const bool medal = !guild_medal_font::decorate(text, "probe").empty();
     const bool activity = homeActivityNames.mayMatch(text);
-    if (!medal && !activity) return array;
+    const auto durationPattern = i18nDict.find("activity.characterSelect.duration");
+    const bool duration = durationPattern != i18nDict.end() &&
+        homeActivityNames.mayMatchDuration(text, durationPattern->second);
+    if (!medal && !activity && !duration) return array;
     const auto path = textObjectPath(self);
     std::string desired;
     if (medal && path == guild_medal_font::path) desired = guildMedalRenderedText(self, text);
     else if (activity) desired = homeActivityNames.translate(text, path);
+    else if (duration) desired = homeActivityNames.translateDuration(text, path, durationPattern->second);
     if (desired.empty() || desired == text) return array;
     bool applied = false;
     void* updated = rebuildTmpGlyphBuffer(self, array, desired, &applied);
@@ -3530,9 +3588,16 @@ bool installMethod(const char* label, void* target, void* replacement, T& origin
     return true;
 }
 
+#include "runtime_ui_images.inc"
+
 void installTextHooks() {
     if (hooksInstalled.exchange(true)) return;
     int installed = 0;
+    if (!runtimeAtlases.empty()) {
+        installed += installMethod("CanvasRenderer.SetTexture",
+            methodPointer("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "SetTexture", 1),
+            reinterpret_cast<void*>(hookCanvasSetTexture), origCanvasSetTexture);
+    }
     installStorySwapCastHook();
     story_bridge::install([](const char* assembly, const char* ns,
                              const char* klass, const char* name, int count) -> void* {
@@ -3906,7 +3971,7 @@ extern "C" JNIEXPORT jint JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeUpdateDictionary(
     JNIEnv* env, jclass, jstring dictionaryPath, jboolean deferApply) {
     // Matches DictionaryUpdateStatus. No live mutation on INVALID/RESTART_REQUIRED.
-    if (!hooksInstalled.load()) return -1;
+    if (!hooksInstalled.load() && deferApply != JNI_TRUE) return -1;
     if (!dictionaryPath) return 0;
     bool restartRequired = false;
     if (!loadDictionary(javaString(env, dictionaryPath), true, &restartRequired,
@@ -3979,6 +4044,18 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetTextCapture(JNIEnv
     captureAcceptingRecords.store(true);
     return JNI_TRUE;
 }
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativePauseCaptureWrites(JNIEnv*, jclass, jboolean paused) {
+    std::lock_guard<std::mutex> lock(dumpMutex);
+    captureWritesPaused = paused;
+    if (paused) {
+        // A legacy dump-enabled dictionary must not recreate files immediately
+        // after cleanup. Explicit capture sessions remain available.
+        legacyDumpSuppressed.store(true);
+        capturedThisSession.clear();
+        dumped.clear();
+    }
+}
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetTextCapturePath(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> lock(dumpMutex);
@@ -4000,13 +4077,16 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetTextCaptureStatus(
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeInstall(
-    JNIEnv* env, jclass clazz, jstring libraryPath, jstring dictionaryPath, jstring outputPath) {
+    JNIEnv* env, jclass clazz, jstring libraryPath, jstring dictionaryPath, jstring outputPath,
+    jboolean runtimeImagesReady) {
     if (installerCalled.exchange(true)) return JNI_TRUE;
     story_bridge::initialize(env, clazz);
     dumpPath = javaString(env, outputPath);
     octoSettingsPath = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/octo-settings.json";
     resourceRoot = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/resource";
     assetRoot = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/asset";
+    if (runtimeImagesReady == JNI_TRUE)
+        loadRuntimeImages(dumpPath.substr(0, dumpPath.find_last_of('/')) + "/images");
     standaloneFontBundlePath = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/resource-han-rounded.bundle";
     const std::string masterBlobPath = dumpPath.substr(0, dumpPath.find_last_of('/')) +
         "/master-blobs.bin";

@@ -197,6 +197,7 @@ final class NoticeWebViewHook {
     }
 
     private static void inject(WebView view, String url) {
+        if (!TranslationPreferences.active()) return;
         Uri uri = Uri.parse(url);
         if (!"https".equalsIgnoreCase(uri.getScheme()) ||
                 !HOST.equalsIgnoreCase(uri.getHost())) return;

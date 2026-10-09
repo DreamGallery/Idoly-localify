@@ -18,17 +18,19 @@ class ReleaseTests(unittest.TestCase):
         self.assertFalse(result['published']); run.assert_not_called(); exists.assert_not_called()
 
     def test_plugin_notes_use_exact_version_and_install_instructions(self):
-        (self.root / 'CHANGELOG.md').write_text('# Changelog\n\n## 0.2.3\n\n- Cast sync\n\n## 0.2.2\n\n- Old fix\n')
+        (self.root / 'config').mkdir()
+        source = self.root / 'config/plugin-release.json'
+        source.write_text(json.dumps({'version': '0.2.3', 'notes': ['Cast sync']}))
         notes = release.plugin_release_notes(self.root, '0.2.3')
         self.assertIn('Cast sync', notes)
         self.assertNotIn('Old fix', notes)
         self.assertIn('LSPosed', notes)
         self.assertIn('LSPatch', notes)
         self.assertNotIn('MasterDB', notes)
-        with self.assertRaisesRegex(ValueError, 'Missing or duplicate'):
+        with self.assertRaisesRegex(ValueError, 'Missing or invalid'):
             release.plugin_release_notes(self.root, '0.2.4')
-        (self.root / 'CHANGELOG.md').write_text('## 0.2.3\n\n## 0.2.3\n- Duplicate\n')
-        with self.assertRaisesRegex(ValueError, 'Missing or duplicate'):
+        source.write_text(json.dumps({'version': '0.2.3', 'notes': ['']}))
+        with self.assertRaisesRegex(ValueError, 'Missing or invalid'):
             release.plugin_release_notes(self.root, '0.2.3')
 
     def test_new_and_resumed_releases_use_supplied_notes(self):

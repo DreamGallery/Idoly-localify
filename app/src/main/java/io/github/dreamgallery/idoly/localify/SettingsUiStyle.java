@@ -12,6 +12,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 
 /** Shared presentation for full-window plugin settings. */
@@ -115,11 +116,19 @@ final class SettingsUiStyle {
     }
 
     static void row(LinearLayout parent, String label, String value, Runnable action) {
+        row(parent, label, value, action, 10);
+    }
+
+    static void cardRow(LinearLayout parent, String label, String value, Runnable action) {
+        row(parent, label, value, action, 0);
+    }
+
+    private static void row(LinearLayout parent, String label, String value, Runnable action, int inset) {
         Context context = parent.getContext();
         LinearLayout row = new LinearLayout(context);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setMinimumHeight(dp(context, 56));
-        row.setPadding(dp(context, 10), dp(context, 12), dp(context, 10), dp(context, 12));
+        row.setPadding(dp(context, inset), dp(context, 12), dp(context, inset), dp(context, 12));
         row.setBackground(new RippleDrawable(ColorStateList.valueOf(TINT), shape(context, 0xffffffff, 10), null));
         row.setFocusable(true);
         row.setOnClickListener(view -> action.run());
@@ -136,6 +145,30 @@ final class SettingsUiStyle {
         row.addView(arrow);
         row.setContentDescription(label + (value == null ? "" : "，当前值 " + value));
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    static void styleSwitch(Switch view) {
+        Context context = view.getContext();
+        view.setTextSize(16);
+        view.setTextColor(INK);
+        view.setMinHeight(dp(context, 56));
+        view.setPadding(0, dp(context, 10), 0, dp(context, 10));
+        view.setThumbTintList(new ColorStateList(
+            new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+            new int[]{ACCENT, 0xff9699aa}));
+        view.setTrackTintList(new ColorStateList(
+            new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+            new int[]{0x664169df, 0x337a7d90}));
+    }
+
+    static void divider(LinearLayout parent) {
+        Context context = parent.getContext();
+        View line = new View(context);
+        line.setBackgroundColor(0xffeef0f6);
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, dp(context, 1));
+        layout.topMargin = dp(context, 8);
+        layout.bottomMargin = dp(context, 8);
+        parent.addView(line, layout);
     }
 
     static Button button(Context context, String label, boolean primary, Runnable action) {

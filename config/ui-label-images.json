@@ -2,7 +2,7 @@
   "schema_version": 1,
   "texture_entry": "assets/bin/Data/00000000000000000000000000000000",
   "source_sha256": "48e61ed38e098d5b9464b6d21a06879a01c39259d584e0ea11c36ae632ccc913",
-  "font_sha256": "085a738ec5b4020607867b1dc9a65fd32b0465a74ac2a849ed4c579169e8bd28",
+  "font_sha256": "5408d7fbad330fb163f1416460518bf76f37c5fd684442fc931981c5248c1b09",
   "fill_rgba": [
     253,
     60,
@@ -31,11 +31,12 @@
       "font_size": 39,
       "min_font_size": 30,
       "white_stroke": 3,
-      "outer_stroke": 1.5,
+      "outer_stroke": 2.5,
       "glyph_gap": 1,
       "mesh_margin": 1,
       "atlas": "CommonAtlas",
-      "clear_padding": 2
+      "clear_padding": 2,
+      "closed_outline": true
     },
     {
       "sprite": "grid_list_select_vertical",
@@ -49,14 +50,15 @@
       ],
       "text": "已选择",
       "orientation": "vertical",
-      "font_size": 39,
-      "min_font_size": 30,
+      "font_size": 36,
+      "min_font_size": 36,
       "white_stroke": 3,
-      "outer_stroke": 1.5,
-      "glyph_gap": 1,
+      "outer_stroke": 2.5,
+      "glyph_gap": 7,
       "mesh_margin": 1,
       "atlas": "CommonAtlas",
-      "clear_padding": 2
+      "clear_padding": 2,
+      "closed_outline": true
     },
     {
       "sprite": "love_button_start",
@@ -304,7 +306,21 @@
         }
       ],
       "alpha_cutoff": 8,
-      "clear_padding": 2
+      "clear_padding": 2,
+      "enclosed_background_rgba": [
+        255,
+        68,
+        140,
+        255
+      ],
+      "enclosed_background_boxes": [
+        [
+          60,
+          16,
+          67,
+          23
+        ]
+      ]
     },
     {
       "sprite": "love_header_level_label",
@@ -789,7 +805,8 @@
         255,
         255,
         255
-      ]
+      ],
+      "outline_gap_fill": 1.5
     }
   ],
   "atlases": [

@@ -173,7 +173,26 @@
           "y": 91
         }
       ],
-      "clear_padding": 2
+      "clear_padding": 2,
+      "ticket_repair": {
+        "box": [
+          33,
+          40,
+          100,
+          70
+        ],
+        "offset_x": 17,
+        "bounds": [
+          -3.94,
+          43.5,
+          50.4,
+          76.94
+        ],
+        "radius": 3.5,
+        "angle": -30,
+        "stroke": 0,
+        "corner_from_y": 55
+      }
     },
     {
       "sprite": "gacha_item_icon",
@@ -192,7 +211,39 @@
           "y": 91
         }
       ],
-      "clear_padding": 2
+      "clear_padding": 2,
+      "ticket_repair": {
+        "box": [
+          16,
+          40,
+          83,
+          70
+        ],
+        "offset_x": 0,
+        "bounds": [
+          -3.82,
+          43.5,
+          50.4,
+          76.9
+        ],
+        "radius": 3.5,
+        "angle": -30,
+        "stroke": 5.15,
+        "inner_rgb": [
+          67,
+          83,
+          255
+        ],
+        "corner_from_y": 55,
+        "inner_highlight": {
+          "from_u": 32,
+          "rgb": [
+            137,
+            147,
+            255
+          ]
+        }
+      }
     },
     {
       "sprite": "panorama_setting_icon",
@@ -210,5 +261,6 @@
       ],
       "clear_padding": 2
     }
-  ]
+  ],
+  "font_sha256": "5408d7fbad330fb163f1416460518bf76f37c5fd684442fc931981c5248c1b09"
 }

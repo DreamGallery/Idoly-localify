@@ -32,7 +32,8 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static final AtomicBoolean NATIVE_READY = new AtomicBoolean(false);
     private static String modulePath;
 
-    private static native boolean nativeInstall(String il2cppPath, String dictionaryPath, String dumpPath);
+    private static native boolean nativeInstall(String il2cppPath, String dictionaryPath, String dumpPath,
+                                                boolean runtimeImagesReady);
     private static native boolean nativeReloadDictionary(String dictionaryPath);
     private static native int nativeUpdateDictionary(String dictionaryPath, boolean deferApply);
     private static native boolean nativeValidateMasterBlobs(String path);
@@ -42,13 +43,19 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static native String nativeGetFontProfiles();
     private static native boolean nativeApplyFontProfiles(String json);
     private static native boolean nativeResetFontProfiles();
+    private static native void nativePauseCaptureWrites(boolean paused);
+
+    static void pauseCaptureWrites(boolean paused) {
+        if (NATIVE_READY.get() && TranslationPreferences.active()) nativePauseCaptureWrites(paused);
+    }
 
     static boolean reloadDictionary(File dictionary) {
         return NATIVE_READY.get() && nativeReloadDictionary(dictionary.getAbsolutePath());
     }
 
     static int updateDictionary(File dictionary, boolean deferApply) {
-        return NATIVE_READY.get() ? nativeUpdateDictionary(dictionary.getAbsolutePath(), deferApply)
+        return NATIVE_READY.get() ? nativeUpdateDictionary(dictionary.getAbsolutePath(),
+                deferApply || !TranslationPreferences.active())
             : DictionaryUpdateStatus.NOT_READY;
     }
 
@@ -57,7 +64,7 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     }
 
     static boolean setTextCaptureEnabled(boolean enabled) {
-        return NATIVE_READY.get() && nativeSetTextCapture(enabled);
+        return NATIVE_READY.get() && TranslationPreferences.active() && nativeSetTextCapture(enabled);
     }
 
     static String getTextCapturePath() {
@@ -121,8 +128,25 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             // Recover a transaction interrupted by process death before the
             // built-in asset installer or native loader reads any file.
             TextHotUpdater.recover(dataDir);
+            TranslationPreferences.initialize(context);
+            LocalifyOverlayUi.install((Application) context.getApplicationContext());
+            LocalifyOverlayUi.configure(dataDir);
+            UpdateChecker.startup(context, dataDir);
+            System.loadLibrary("idoly_localify");
+            if (!TranslationPreferences.active()) {
+                // Keep the parser available for verified downloads. No Unity
+                // localization/font/resource hooks are installed in this process.
+                NATIVE_READY.set(true);
+                Log.i(TAG, "Translation disabled; settings and download validation available");
+                return;
+            }
             File dictionary = new File(dataDir, "dict.json");
             ensureBuiltInDictionary(context, dictionary);
+            boolean imagesReady = false;
+            try { BuiltInImagesInstaller.install(context, dataDir); imagesReady = true; }
+            catch (Exception error) {
+                Log.w(TAG, "Runtime images unavailable; original images retained", error);
+            }
             try {
                 File font = new File(dataDir, "resource-han-rounded.bundle");
                 boolean installed = BuiltInFontInstaller.install(
@@ -134,9 +158,6 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
                 Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
                     + "existing complete module bundle for retry", error);
             }
-            LocalifyOverlayUi.install((Application) context.getApplicationContext());
-            LocalifyOverlayUi.configure(dataDir);
-            UpdateChecker.startup(context, dataDir);
             try {
                 File notices = new File(dataDir, "web-notice.json");
                 ensureBuiltInFile(context, notices, "web-notice.installed.sha256");
@@ -150,10 +171,9 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             ShadowHook.init(new ShadowHook.ConfigBuilder()
                 .setMode(ShadowHook.Mode.UNIQUE)
                 .build());
-            System.loadLibrary("idoly_localify");
             File il2cpp = new File(context.getApplicationInfo().nativeLibraryDir, "libil2cpp.so");
             boolean ok = nativeInstall(il2cpp.getAbsolutePath(), dictionary.getAbsolutePath(),
-                new File(dataDir, "dump.jsonl").getAbsolutePath());
+                new File(dataDir, "dump.jsonl").getAbsolutePath(), imagesReady);
             if (!ok) throw new IllegalStateException("Native installation failed");
             NATIVE_READY.set(true);
             FontProfileEditor.restoreSaved(dataDir);

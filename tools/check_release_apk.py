@@ -7,6 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from build_text_update import validate_json
+from check_runtime_images import read_directory, validate as validate_images
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = 'assets/idoly-localify/'
@@ -24,11 +25,17 @@ def check(apk, project=ROOT):
     from build_font_bundle import verify
     from prepare_module_font import verify_font
 
+    images = read_directory(project / 'app/src/main/assets/idoly-localify/images')
     with ZipFile(apk) as archive:
         names = archive.namelist()
         payloads = {name[len(ASSETS):] for name in names if name.startswith(ASSETS)}
-        if payloads != PAYLOADS or len(names) != len(set(names)):
+        expected = PAYLOADS | {'images/' + name for name in images}
+        if payloads != expected or len(names) != len(set(names)):
             raise ValueError('Unexpected or missing module assets')
+        embedded_images = {name: archive.read(ASSETS + 'images/' + name) for name in images}
+        validate_images(embedded_images)
+        if embedded_images != images:
+            raise ValueError('Module images differ from the reviewed source payload')
         for name in ('dict.json', 'web-notice.json'):
             validate_json(name, archive.read(ASSETS + name))
         for name in names:
@@ -50,7 +57,8 @@ def check(apk, project=ROOT):
     verify_font(font, spec)
     report = verify(bundle, font)
     return {'font_sha256': report['font_sha256'], 'font_weight': spec['weight'],
-            'automatic_capture': False, 'payload_files': len(payloads)}
+            'automatic_capture': False, 'payload_files': len(payloads),
+            'runtime_atlases': len(images) - 1}
 
 
 if __name__ == '__main__':

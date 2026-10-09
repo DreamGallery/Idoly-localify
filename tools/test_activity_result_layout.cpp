@@ -19,6 +19,12 @@ int main() {
     }
     assert(activityName("PromotionScreen(Clone)/ScreenCanvas/ScreenRoot/ReceieveResult/Dialog/ActivityLevel/ActivityInfo/Name"));
     assert(!activityName("Other/ActivityInfo/Name"));
+    const std::string training = "WindowSystem/WindowRoot/HomeWindow(Clone)/Rewards/"
+        "ActivityLessonReceiveThumbnailListCell(Clone)/YellThumbnail/YellIcon/YellText";
+    assert(trainingAileLabel(training));
+    assert(!trainingAileLabel(training + "/Other"));
+    assert(!trainingAileLabel("OtherActivityLessonReceiveThumbnailListCell(Clone)/YellThumbnail/YellIcon/YellText"));
+    assert(!trainingAileLabel("Other/YellThumbnail/YellIcon/YellText"));
     // The receive popup uses left/middle and final results left/top. A centered
     // child shifts their glyphs by W/2 and (for results) -H/2 respectively.
     assert(needsPivotSync(0,.5f,.5f,.5f));

@@ -9,6 +9,18 @@ int main() {
     HomeActivityNameMatcher matcher;
     assert(matcher.size() == 0 && !matcher.mayMatch("サイン会 Lv28"));
     assert(matcher.add("サイン会", "签名会"));
+    const std::string durationPath =
+        "WindowSystem/WindowRoot/ActivityWindow(Clone)/FanEventCharacterScreen(Clone)/"
+        "ScreenCanvas/ScreenRoot/ActivityCharacterSelectCommonUI/Fullscreen/"
+        "ActivityCharacterSelectCommonUpper/FadeRoot/RequiredTime/RequiredTimeTitle";
+    assert(matcher.mayMatchDuration("サイン会所需时间参考", "{0}所需时间参考"));
+    assert(matcher.translateDuration("サイン会所需时间参考", durationPath, "{0}所需时间参考") == "签名会所需时间参考");
+    assert(matcher.translateDuration("预计サイン会用时", durationPath, "预计{0}用时") == "预计签名会用时");
+    assert(matcher.translateDuration("サイン会所需时间参考", durationPath + "/Other", "{0}所需时间参考").empty());
+    assert(matcher.translateDuration("玩家所需时间参考", durationPath, "{0}所需时间参考").empty());
+    assert(matcher.translateDuration("签名会所需时间参考", durationPath, "{0}所需时间参考").empty());
+    for (const auto pattern : {"{0}", "{0}{0}", "{1}{0}", "{0}多余}"})
+        assert(!matcher.mayMatchDuration("サイン会所需时间参考", pattern));
     for (const std::string slot : {"FanEvent", "Promotion", "Refresh"}) {
         const auto path = prefix + slot + "/NameBase/Name";
         assert(matcher.translate("サイン会 Lv28", path) == "签名会 Lv28");

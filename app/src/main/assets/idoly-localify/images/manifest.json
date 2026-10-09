@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "textures": [
+    {
+      "name": "sactx-0-1024x2048-ASTC 6x6-GachaAtlas-dafc3479",
+      "width": 1024,
+      "height": 2048,
+      "file": "atlas-0.png",
+      "sha256": "314b3e3eb99b01c2a5c843237f7e66aa6297906b43364c8bc833c0e5b21f4fa2"
+    },
+    {
+      "name": "sactx-0-1024x2048-ASTC 6x6-PhotoAtlas-206d6b0b",
+      "width": 1024,
+      "height": 2048,
+      "file": "atlas-1.png",
+      "sha256": "1df46e8987f4c536a294615fd8a136e45de856a84f52704da152afb2049c35e1"
+    },
+    {
+      "name": "sactx-1-2048x2048-ASTC 6x6-CommonAtlas-06d6728f",
+      "width": 2048,
+      "height": 2048,
+      "file": "atlas-2.png",
+      "sha256": "e725d9d459dc5f3ce1cd0698229e35dc05d6fac26030a58ce483de90cdb3a881"
+    },
+    {
+      "name": "sactx-0-2048x2048-ASTC 6x6-LoveAtlas-3307927b",
+      "width": 2048,
+      "height": 2048,
+      "file": "atlas-3.png",
+      "sha256": "ac1f9cb50e79f2591c31a40ebe9227fd59ff07000de03235bd7f4778388ac349"
+    },
+    {
+      "name": "sactx-0-1024x2048-ASTC 6x6-LoveADVAtlas-9df05f4f",
+      "width": 1024,
+      "height": 2048,
+      "file": "atlas-4.png",
+      "sha256": "5499349feeb9a0834deb1bf11c6c916bef7b7d8bf32b75a107bd08210d72d705"
+    },
+    {
+      "name": "sactx-0-1024x2048-ASTC 6x6-HomeAtlas-bd012772",
+      "width": 1024,
+      "height": 2048,
+      "file": "atlas-5.png",
+      "sha256": "e957ad15419357fe04b9124f543f37d3719dfb3fe28f0c35b8824e6b26616385"
+    }
+  ]
+}

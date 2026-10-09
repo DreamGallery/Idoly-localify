@@ -53,24 +53,30 @@ void alignActivityResultAile(void* self) {
     if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
-    if (utf8(name) != "Aile" || !activity_result_layout::aileLabel(textObjectPath(self))) return;
+    const auto labelName = utf8(name);
+    if (labelName != "Aile" && labelName != "YellText") return;
+    const auto path = textObjectPath(self);
+    const bool training = labelName == "YellText" && activity_result_layout::trainingAileLabel(path);
+    if (!training && (labelName != "Aile" || !activity_result_layout::aileLabel(path))) return;
     auto* text = static_cast<Il2CppString*>(readFontProperty(self,
         "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_text"));
-    if (utf8(text) != "应援") return;
+    const auto label = utf8(text);
+    if (label != "应援" && !(training && label == "声援")) return;
     void* transform = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform");
     void* bounds = transform ? readFontProperty(transform,
         "UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect") : nullptr;
     const auto* rect = bounds ? static_cast<float*>(objectUnbox(bounds)) : nullptr;
-    // The original 72 x 24 box is already centered inside the 88 x 40 badge.
-    // Its three-character Japanese label used left alignment; two Chinese
-    // characters need center alignment, without moving the badge or hit area.
+    // Both badge text boxes already have symmetric inset. The original work
+    // badge aligns left and the training reward aligns right; center the two
+    // translated characters while preserving the vertical baseline and inset.
     if (!rect || !std::isfinite(rect[2]) || !std::isfinite(rect[3]) ||
-        std::fabs(rect[2] - 72) > .5f || std::fabs(rect[3] - 24) > .5f) return;
+        std::fabs(rect[2] - (training ? 70 : 72)) > .5f || std::fabs(rect[3] - 24) > .5f) return;
     void* box = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_alignment");
     const auto* previous = box ? static_cast<int32_t*>(objectUnbox(box)) : nullptr;
     static const auto setAlignment = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_alignment", 1);
-    if (!previous || !setAlignment || (*previous != 4097 && *previous != 4098)) return;
-    if (*previous == 4097) {
+    if (!previous || !setAlignment ||
+        (*previous != (training ? 4100 : 4097) && *previous != 4098)) return;
+    if (*previous != 4098) {
         int32_t centered = 4098; void* args[] = {&centered}; void* error = nullptr;
         runtimeInvoke(setAlignment, self, args, &error);
         if (error) LOGE("Cannot center activity result Aile label");

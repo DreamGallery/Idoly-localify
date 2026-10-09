@@ -36,6 +36,7 @@ final class TextHotUpdater {
     private static final String TRANSACTION_DIR = ".text-update-transaction";
     private static final String TEXT_VERSION_FILE = "installed-text-version.txt";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    private static volatile String operation = "";
     private static volatile boolean dictionaryRestartPending;
 
     interface Callback { void done(Result result); }
@@ -64,11 +65,21 @@ final class TextHotUpdater {
 
     private TextHotUpdater() {}
 
+    static boolean busy() { return RUNNING.get(); }
+    static String progress() { return busy() ? (operation.isEmpty() ? "正在处理文件…" : operation) : ""; }
+    static boolean beginMaintenance() {
+        if (!RUNNING.compareAndSet(false, true)) return false;
+        operation = "正在清理本地文件…";
+        return true;
+    }
+    static void endMaintenance() { operation = ""; RUNNING.set(false); }
+
     static void run(File dataDir, boolean remote, Callback callback) {
         if (!RUNNING.compareAndSet(false, true)) {
             callback.done(new Result(false, "已有文本更新正在进行"));
             return;
         }
+        operation = remote ? "正在下载并校验文本…" : "正在载入本地文本…";
         new Thread(() -> {
             Result result;
             try {
@@ -81,6 +92,7 @@ final class TextHotUpdater {
                     error instanceof IllegalStateException ? error.getMessage() : null;
                 result = new Result(false, detail == null ? "下载或文件操作失败" : detail);
             } finally {
+                operation = "";
                 RUNNING.set(false);
             }
             callback.done(result);

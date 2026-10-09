@@ -97,10 +97,23 @@ final class UpdateChecker {
         }, "IdolyVersionCheck").start();
     }
 
-    static String status(Context context, File directory) {
+    static final class Status {
+        final String textVersion, textState, pluginState, progress;
+        final boolean checking;
+
+        Status(String textVersion, String textState, String pluginState, String progress, boolean checking) {
+            this.textVersion = textVersion;
+            this.textState = textState;
+            this.pluginState = pluginState;
+            this.progress = progress;
+            this.checking = checking;
+        }
+    }
+
+    static Status status(Context context, File directory) {
         SharedPreferences prefs = preferences(context);
         String text = TextHotUpdater.readTextVersion(directory);
-        String display = text.isEmpty() ? "内置文本" : text;
+        String display = text.isEmpty() ? (TranslationPreferences.deleted(context) ? "未下载" : "内置文本") : text;
         String remote = prefs.getString("text_version", "");
         String address = TextHotUpdater.readManifestUrl(directory);
         boolean sameAddress = address.equals(prefs.getString("text_address", ""));
@@ -116,8 +129,9 @@ final class UpdateChecker {
             textState = "暂时无法检查文本更新";
         if (!sameAddress) textState = "尚未检查当前文本地址";
         if (address.isEmpty()) textState = "在线文本更新已停用";
-        return "插件 " + BuildConfig.VERSION_NAME + "\n文本：" + display + "\n"
-            + (RUNNING.get() ? "正在检查版本…" : textState + "\n" + pluginState);
+        boolean checking = RUNNING.get();
+        return new Status(display, textState, pluginState,
+            TextHotUpdater.busy() ? TextHotUpdater.progress() : checking ? "正在检查版本…" : "", checking);
     }
 
     static String downloadPage(Context context) {

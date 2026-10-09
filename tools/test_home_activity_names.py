@@ -38,6 +38,20 @@ class HomeActivityNamesTests(unittest.TestCase):
             self.assertFalse(may_match(text, names))
         self.assertIsNone(translate('サイン会 Lv28', 'Unknown/NameBase/Name', names))
 
+    def test_duration_prompt_translates_reviewed_arguments_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, translated, output = [root / name for name in ('source.json', 'zh.json', 'dict.json')]
+            source.write_text(json.dumps({'i18n': {'activity.characterSelect.duration': '{0}所要時間の目安'},
+                'home_activity_names': {'サイン会': 'サイン会'}}))
+            translated.write_text(json.dumps({'i18n': {'activity.characterSelect.duration': '{0}所需时间参考'},
+                'home_activity_names': {'サイン会': '签名会'}}))
+            result = build(source, translated, output, False)
+            for original in ('サイン会所要時間の目安', 'サイン会所需时间参考'):
+                self.assertEqual(result['text'][original], '签名会所需时间参考')
+            for original in ('サイン会', '玩家所需时间参考', 'サイン会所需时间参考其他'):
+                self.assertNotIn(original, result['text'])
+
     def test_validation_rejects_unpaired_names_tokens_limits_and_chains(self):
         self.assertEqual(compile_names({}, {}), {})
         for source, translated in [({'サイン会': 'サイン会'}, {}), ({'サイン会': 'oops'}, {'サイン会': '签名会'}),

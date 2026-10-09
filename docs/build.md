@@ -4,7 +4,7 @@
 
 ## 加载方式
 
-推荐在已 root 的 Android 上，通过兼容系统版本的 LSPosed 或 Vector 启用独立模块，作用域只选 `game.qualiarts.idolypride`。游戏可使用未修补原版 APK；中文字体由模块内置 AssetBundle 提供，图片保留原版。LSPatch 也可仅嵌入模块，不再将字体写进游戏资源。不要让同一游戏进程同时使用 LSPatch 内嵌模块和系统框架重复加载。
+推荐在已 root 的 Android 上，通过兼容系统版本的 LSPosed 或 Vector 启用独立模块，作用域只选 `game.qualiarts.idolypride`。游戏可使用未修补原版 APK；中文字体与汉化图片由模块提供。LSPatch 同样仅嵌入模块，保留游戏原始字体与图片资源。不要让同一游戏进程同时使用 LSPatch 内嵌模块和系统框架重复加载。
 
 模块在原生钩子安装前，将内置字体按 SHA-256 校验后原子安装到游戏私有外部目录 `files/idoly-localify/resource-han-rounded.bundle`。模块升级或文件损坏时自动替换，失败则保留之前完整文件。此二进制不使用用户词典的保留修改规则。运行时从模块字体包加载；暂时加载失败时保留原字体并重试。
 
@@ -56,6 +56,10 @@ python3 tools/prepare_module_font.py \
 
 将 `.analysis/font-bundle-template` 替换为实际模板文件。工具检查字体字节、对象及引用完整性，输出旁附校验报告。生成的 bundle 已加入 Git 忽略；构建前须自行准备，Gradle 不联网获取字体。LSPosed 用户完成模块构建安装后，启用作用域并启动一次游戏即可安装字体。
 
+## 模块图片
+
+已审核图集随代码保存在 `app/src/main/assets/idoly-localify/images/`，构建时直接打包，无需从 Patcher 获取图片或重新下载游戏。执行 `python3 tools/check_runtime_images.py` 校验清单、PNG 尺寸和哈希；修改素材的流程见[图片本地化](image-localization.md)。
+
 ## 生成测试包
 
 先按[文本流程](text-pipeline.md)准备好 TXT、CSV 和审校 JSON，再构建：
@@ -76,7 +80,7 @@ python3 tools/build_test_apks.py \
 
 `build_test_apks.py` 只封装已有模块 APK，不会执行 Gradle。修改 Java、原生代码或内置资源后，必须先成功执行 `assembleDebug`，再封装；嵌入一致性检查只证明所选 APK 被正确嵌入，不证明它对应最新源码。
 
-默认 `module-font` 模式只嵌入模块；字体来自模块 AssetBundle。可另选图片汉化；旧字体修补模式仅用于兼容已有部署。
+默认 `module-font` 模式只嵌入模块；字体来自模块 AssetBundle，图片来自模块运行时载荷（见[图片本地化](image-localization.md)）。使用运行时图片时不要传入 `--image-patches`，以便关闭翻译后恢复原图。旧字体及图片烘焙模式仅用于兼容已有部署。
 
 打包脚本会检查 APK 包名、版本、原版签名和字体覆盖率，检查模块内置词典的字体模式与实际载荷是否配对，再按所选模式处理字体、嵌入模块、签名，并核对输出。兼容模式 `add-font` 保留游戏全部原字体资源，须搭配正式 pipeline 生成的 `replace-ui` 词典：界面文字默认使用 Noto Sans CJK SC SemiBold，纯数字及符号组合（包含千分位逗号、时间及加号数字）、商品售价整组（含币种符号与单位）、指定装饰标题及 Rank 下方等级保留原字体，Rank 标题及好友列表昵称与等级整行仍用 Noto Sans CJK SC SemiBold，具体规则由 `ui_font_policy.h` 管理。旧 `preserve-non-cjk` 同样使用 `add-font`，仍保留其按字符分类的兼容行为。旧方案可显式构建 `--font-patch-mode replace-fot`，但模块内置词典也须使用旧模式。默认使用 Android 调试密钥；正式签名可通过 `--keystore` 和 `IDOLY_KEYSTORE_PASSWORD` 指定。测试包包含游戏文件，仅供本地使用。
 
