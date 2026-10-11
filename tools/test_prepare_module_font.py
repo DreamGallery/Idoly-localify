@@ -1,5 +1,6 @@
 """Pinned font downloads and failed preparation must not replace good assets."""
 from io import BytesIO
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -56,6 +57,51 @@ class ModuleFontTests(unittest.TestCase):
         for key, bad in [('family', 'Other'), ('style', 'Regular'), ('weight', 500)]:
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'metadata'):
                 fonts.verify_font(self.data, dict(self.spec, **{key: bad}))
+
+    def test_local_only_spec_requires_a_pinned_file(self):
+        spec = {key: value for key, value in self.spec.items() if key != 'url'}
+        with patch.object(fonts.urllib.request, 'urlopen') as get:
+            with self.assertRaisesRegex(ValueError, 'provide --font'):
+                fonts.resolve_font(spec, self.root)
+            local = self.root / 'selected.otf'
+            local.write_bytes(self.data)
+            self.assertEqual(fonts.resolve_font(spec, self.root, local), self.data)
+            get.assert_not_called()
+
+    def packaged_spec(self, payload=None):
+        data = gzip.compress(self.data if payload is None else payload, mtime=0)
+        path = self.root / 'font-sources/selected.otf.gz'
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(data)
+        return dict(self.spec, source={'path': 'font-sources/selected.otf.gz', 'format': 'gzip',
+                                      'sha256': hashlib.sha256(data).hexdigest()})
+
+    def test_packaged_font_is_verified_and_prepared_without_network(self):
+        spec = self.packaged_spec()
+        with patch.object(fonts, 'ROOT', self.root), patch.object(fonts.urllib.request, 'urlopen') as get:
+            self.assertEqual(fonts.resolve_font(spec, self.root / 'cache'), self.data)
+            self.assertEqual(fonts.resolve_font(spec, self.root / 'cache'), self.data)
+            get.assert_not_called()
+
+    def test_packaged_source_and_decompressed_font_both_require_pinned_hashes(self):
+        spec = self.packaged_spec()
+        with patch.object(fonts, 'ROOT', self.root):
+            (self.root / spec['source']['path']).write_bytes(b'corrupt archive')
+            with self.assertRaisesRegex(ValueError, 'source SHA-256'):
+                fonts.resolve_font(spec, self.root / 'cache')
+            with self.assertRaisesRegex(ValueError, 'font SHA-256'):
+                fonts.resolve_font(self.packaged_spec(b'wrong font'), self.root / 'cache')
+        self.assertFalse((self.root / 'cache' / (spec['sha256'] + '.otf')).exists())
+
+    def test_packaged_source_cannot_escape_project_or_decompress_without_limit(self):
+        spec = self.packaged_spec(b'A' * 4096)
+        with patch.object(fonts, 'ROOT', self.root), patch.object(fonts, 'MAX_FONT_BYTES', 1024):
+            with self.assertRaisesRegex(ValueError, 'exceeds size limit'):
+                fonts.resolve_font(spec, self.root / 'cache')
+            for path in ('../outside.otf.gz', '/outside.otf.gz'):
+                spec['source']['path'] = path
+                with self.assertRaisesRegex(ValueError, 'Invalid packaged'):
+                    fonts.resolve_font(spec, self.root / 'cache')
 
     def variable_spec(self, source):
         return dict(self.spec, source={

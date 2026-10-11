@@ -27,14 +27,14 @@
       "width": 2048,
       "height": 2048,
       "file": "atlas-3.png",
-      "sha256": "ac1f9cb50e79f2591c31a40ebe9227fd59ff07000de03235bd7f4778388ac349"
+      "sha256": "c110fab57b6862247eb1d84b821ac638693f539c87519fcd77acc18ab83eb816"
     },
     {
       "name": "sactx-0-1024x2048-ASTC 6x6-LoveADVAtlas-9df05f4f",
       "width": 1024,
       "height": 2048,
       "file": "atlas-4.png",
-      "sha256": "5499349feeb9a0834deb1bf11c6c916bef7b7d8bf32b75a107bd08210d72d705"
+      "sha256": "f9113b7b3ccc3daa62c50e02d472b11c434ae9bd45c95f5219c938053d0a1b61"
     },
     {
       "name": "sactx-0-1024x2048-ASTC 6x6-HomeAtlas-bd012772",

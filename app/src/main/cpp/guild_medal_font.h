@@ -3,7 +3,10 @@
 #include <string_view>
 
 namespace guild_medal_font {
-inline constexpr std::string_view path = "WindowSystem/WindowRoot/LiveWindow(Clone)/GuildWindow(Clone)/GuildTopScreen(Clone)/ScreenCanvas/ScreenRoot/UnionMedal/Amount";
+inline bool matches(std::string_view path) {
+    constexpr std::string_view suffix = "/GuildWindow(Clone)/GuildTopScreen(Clone)/ScreenCanvas/ScreenRoot/UnionMedal/Amount";
+    return path.size() >= suffix.size() && path.substr(path.size() - suffix.size()) == suffix;
+}
 // Return no edit for other content or an already decorated value. Keep the
 // numeric bytes intact; rich-text font selection affects only their rendering.
 inline std::string decorate(std::string_view text, std::string_view originalFont) {

@@ -23,20 +23,20 @@ ADJUSTMENTS = {
 GUARDS = {'original_font_size_unity', 'original_outline_width',
           'original_line_spacing_unity', 'rect_size_unity', 'rect_height_unity'}
 COLORS = {'face_color_rgba', 'outline_color_rgba', 'vertex_color_rgba'}
-BOOLEANS = {'rebind_font_before_render', 'disable_auto_size', 'outline_outward'}
+BOOLEANS = {'rebind_font_before_render', 'disable_auto_size', 'outline_outward', 'original_punctuation'}
 PROFILE_SPECS = {
     'ordinary_story_subtitle': ('ordinary_story', ['Message Label'],
                                 {'outline_width', 'face_dilate', 'font_size_unity',
-                                 'character_spacing_unity'}),
+                                 'character_spacing_unity', 'original_punctuation'}),
     'ordinary_story_name': ('ordinary_story', ['Name Label'],
                             {'outline_width', 'face_dilate', 'face_color_rgba',
                              'outline_color_rgba', 'vertex_color_rgba'}),
     'portrait_love_event_name': ('portrait_love_event', ['Name Label', 'Text'],
                                  {'font_size_ratio', 'font_size_base_unity', 'alignment'}),
     'portrait_love_event_dialogue': ('portrait_love_event', ['Message Root', 'Message Text'],
-                                     {'line_spacing_delta_unity', 'anchored_y_delta_unity'}),
+                                     {'line_spacing_delta_unity', 'anchored_y_delta_unity', 'original_punctuation'}),
     'home_talk_dialogue': ('home_talk', ['Bottom', 'SerifWIndow', 'Serif'],
-                           {'font_size_ratio', 'anchored_y_delta_unity'}),
+                           {'font_size_ratio', 'anchored_y_delta_unity', 'original_punctuation'}),
     'home_talk_name': ('home_talk', ['Bottom', 'NameHeader', 'Name'],
                        {'rebind_font_before_render', 'rebuild_parent_layout_below_width_unity'}),
     'home_venus_rank': ('home', ['HomeVenusRankButton', 'Button', 'Rank'],
@@ -113,9 +113,15 @@ def validate(data):
     _object(data, {'schema_version', 'game_version', 'font', 'profiles'}, 'root')
     if type(data.get('schema_version')) is not int or data.get('schema_version') != 1 or data.get('game_version') != '6.0.2':
         raise ValueError('expected schema version 1 for game 6.0.2')
-    if data.get('font') == {'mode': 'preserve-non-cjk', 'unity_font_name': INDEPENDENT_FONT_NAME}:
+    previous_fonts = [
+        {'mode': 'preserve-non-cjk', 'unity_font_name': INDEPENDENT_FONT_NAME},
+        # Import saved settings from the retired resource ID; never load it.
+        *({'mode': mode, 'unity_font_name': 'Localify-ResourceHanRoundedSC-ExtraBold'}
+          for mode in ('replace-ui', 'preserve-non-cjk')),
+    ]
+    if data.get('font') in previous_fonts:
         data = copy.deepcopy(data)
-        data['font']['mode'] = DEFAULT_FONT_MODE
+        data['font'] = {'mode': DEFAULT_FONT_MODE, 'unity_font_name': INDEPENDENT_FONT_NAME}
     data = copy.deepcopy(data)
     for profile in data.get('profiles', []) if isinstance(data.get('profiles'), list) else []:
         if isinstance(profile, dict) and profile.get('id') == 'portrait_love_event_name':

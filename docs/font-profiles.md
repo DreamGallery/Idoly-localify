@@ -1,6 +1,6 @@
 # 字体页面配置 v1
 
-`config/font-profiles.json` 是游戏 6.0.2、`replace-ui`、完整 Noto Sans CJK SC SemiBold 与独立 `module-font` 字体载荷的基线配置。原生插件与全屏参数预览面板共用这些参数。仓库基线修改后运行：
+`config/font-profiles.json` 是游戏 6.0.2、`replace-ui` 与独立 `module-font` 字体载荷的基线配置。通用文本使用 Noto Sans CJK SC SemiBold，若恋采用 Resource Han Rounded SC Bold。原生插件与全屏参数预览面板共用这些参数。仓库基线修改后运行：
 
 ```sh
 python3 tools/font_profiles.py
@@ -8,7 +8,7 @@ python3 -m unittest discover -s tools -p 'test_font_profiles.py'
 python3 tools/font_profiles.py --write-header
 ```
 
-配置使用 `schema_version=1`、游戏版本 `6.0.2`、独立 Unity 字体对象名 `Localify-ResourceHanRoundedSC-ExtraBold` 和十九个已识别 profile。模块提供完整 Noto Sans CJK SC SemiBold，游戏原字体保留。运行时只允许调整 `adjust` 中通过校验的数值、布尔值和 RGBA；`page`、`path_suffix`、`guard` 等选择条件锁定为编译基线，避免误命中其他页面。新控件或按钮必须先采集对象路径与原控件尺寸，再审核并新增 profile，不能用任意对象通配调参。
+配置使用 `schema_version=1`、游戏版本 `6.0.2`、独立 Unity 字体对象名 `Localify-DefaultCJK` 和十九个已识别 profile。模块提供完整 Noto Sans CJK SC SemiBold，游戏原字体保留。运行时只允许调整 `adjust` 中通过校验的数值、布尔值和 RGBA；`page`、`path_suffix`、`guard` 等选择条件锁定为编译基线，避免误命中其他页面。新控件或按钮必须先采集对象路径与原控件尺寸，再审核并新增 profile，不能用任意对象通配调参。
 
 ## 匹配与单位
 
@@ -19,7 +19,7 @@ python3 tools/font_profiles.py --write-header
 | `ordinary_story` | `Message Label` | 独立字体图集与材质：描边 0.35、字面扩张 0.35；可调字号（默认 54）和字间距（默认 16） |
 | `ordinary_story` | `Name Label` | 独立材质：描边 0.5、字面扩张 0.5、黑字白边；保持原字号与字间距 |
 | `portrait_love_event` | `Name Label/Text` | 基准字号 40，关闭自动缩放，姓名框随文本扩宽，水平居中 |
-| `portrait_love_event` | `Message Root/Message Text` | 行距从原 28.8 减 15.8 至 13，文本锚点上移 9 Unity 单位 |
+| `portrait_love_event` | `Message Root/Message Text` | 圆体使用原控件纵向度量，保留原行距 28.8 和文本锚点 |
 | `home_talk` | `Bottom/SerifWIndow/Serif` | 字号为原 48 的 0.875 倍，即 42；锚点上移 12 Unity 单位 |
 | `home_talk` | `Bottom/NameHeader/Name` | 绘制前重绑字体；局部宽度不足 155 Unity 单位时重建布局 |
 | `home` | 两个 `*/Button/Rank` | 关闭自动缩放，按 148 单位可用宽度收缩；基准字号各为 52／50 |
@@ -55,6 +55,8 @@ Venus 联盟首页的「联盟演唱会」「工作人员培养」分别按父�
 
 ## 运行时编辑
 
+普通剧情、HomeTalk 与若恋对白各自提供 `original_punctuation` 开关（默认开启），让指定标点沿用原版字体。关闭后标点与正文统一采用替换字体；人名不受此选项影响。
+
 普通剧情字幕支持单独调整 `font_size_unity`（1–200）与 `character_spacing_unity`（−100–100），正字间距拉开字符、负值收紧。按原始字号和材质识别字幕后，以控件弱引用记录身份；改变字号不会使后续预览失去匹配。字号与间距直接赋值，不逐帧累加；显式字号关闭字幕自动缩放。旧保存文件只补入这两个默认值，其余已有调整保留。普通剧情人名不提供这两个选项。
 
 游戏内展开「IP」浮窗，进入「详细设置 → 调整字号与排版」。选择已识别场景和参数后先预览；面板会关闭，便于查看游戏画面。“返回游戏”保留当前预览；再次进入可保存、明确取消本次预览或恢复默认，没有待保存预览时不显示取消项。保存的配置位于游戏外部文件目录的 `idoly-localify/font-profiles.json`，下次启动会校验并载入；校验失败保持内置基线。运行时在 Unity 主线程按配置代数更新控件，从弱引用记录的原始字号、行距和锚点重算，避免反复应用增量。故事字幕与人名使用独立材质副本，调整其中一个描边不会修改共享原材质。
@@ -68,13 +70,13 @@ Venus 联盟首页的「联盟演唱会」「工作人员培养」分别按父�
 
 ## 正式字体契约
 
-`Localify-ResourceHanRoundedSC-ExtraBold` 和 `resource-han-rounded.bundle` 是沿用的内部资源标识，用于兼容已有配置和旧版修补包；实际字体为 `config/font-source.json` 指定的 Noto Sans CJK SC SemiBold。
+通用字体对象为 `Localify-DefaultCJK`，由 `config/font-source.json` 固定为 Noto Sans CJK SC SemiBold 600；`resource-han-rounded.bundle` 保留为安装文件名。若恋对白及原 `FOT-UDMarugo_SmallPr6-B` 控件使用独立的 `Localify-LoveRoundedSC`，由 `config/love-font-source.json` 固定为 Resource Han Rounded SC Bold 700。若恋按钮图片使用同一份 Bold 字体，哈希由 `config/ui-label-images.json` 校验。
 
-界面文字默认整段使用完整 Noto Sans CJK SC SemiBold，包括英文、玩家昵称与标签；仅含数字及常见符号的文本（如 `＋1655`、`10%`、`08:00:00`、`1/10`、`￥1,200`，支持全角形式）、商品售价整组（含币种符号与单位）、指定装饰标题及 Venus／事务所 Rank 下方等级保留游戏原字体。通用数字规则至少要求一个数字，含中文、日文、英文字母或富文本标签时不按此规则保留；单独的 `……` 等剧情标点继续使用替换字体。Rank 标题、两处 `360°LIVE` 标题及好友列表昵称与等级整行仍用替换字体，具体规则由 `app/src/main/cpp/ui_font_policy.h` 管理。旧 `preserve-non-cjk` 仍兼容并配对 `add-font`。运行时 `replace-ui` 配对 `module-font`，并兼容旧 `add-font`，Unity Font 名为 `Localify-ResourceHanRoundedSC-ExtraBold`。正式 pipeline 与内置词典采用该模式；APK 构建器在构建前及签名结果验证时检查模块内置词典与载荷模式。旧 `fallback`／`replace-translated`／`replace-all` 模式仍可显式使用对应 `replace-fot` 载荷。
+界面文字默认整段使用完整 Noto Sans CJK SC SemiBold，包括英文、玩家昵称与标签；仅含数字及常见符号的文本（如 `＋1655`、`10%`、`08:00:00`、`1/10`、`￥1,200`，支持全角形式）、商品售价整组（含币种符号与单位）、指定装饰标题及 Venus／事务所 Rank 下方等级保留游戏原字体。通用数字规则至少要求一个数字，含中文、日文、英文字母或富文本标签时不按此规则保留；单独的 `……` 等剧情标点继续使用替换字体。Rank 标题、两处 `360°LIVE` 标题及好友列表昵称与等级整行仍用替换字体，具体规则由 `app/src/main/cpp/ui_font_policy.h` 管理。旧 `preserve-non-cjk` 仍兼容并配对 `add-font`。运行时 `replace-ui` 配对 `module-font`，并兼容旧 `add-font`，Unity Font 名为 `Localify-DefaultCJK`。正式 pipeline 与内置词典采用该模式；APK 构建器在构建前及签名结果验证时检查模块内置词典与载荷模式。旧 `fallback`／`replace-translated`／`replace-all` 模式仍可显式使用对应 `replace-fot` 载荷。
 
 新模式在 TMP `SetArraySizes(UnicodeChar[])` 查找字形前按真实字符缓冲选择字体，避免格式化文本的空字符串 getter。普通 Unity UI Text 按翻译后的 setter 参数选择字体。选择消息按钮独立使用共享完整替换字体atlas 的静态字体副本，其纵向 FaceInfo 按原字体 pointSize 比例归一化；字形与英文标点仍全部来自替换字体，其他控件的 FaceInfo 不变。
 
-旧版保存的 profiles 若字体元数据恰为 `preserve-non-cjk`／`Localify-ResourceHanRoundedSC-ExtraBold` 或 `replace-all`／`FOT-UDKakugo_LargePro-DB`，原生校验器只迁移此元数据；所有 schema、控件选择器、guard 和 adjust 仍严格校验，合法的用户调整值保留。其他旧或未知元数据不自动接受。主页 Rank 的旧替换字体字号补偿参数仅旧 `replace-all` 模式使用，新模式的纯 Latin Rank 保留原字体布局。HomeTalk 的旧 `rebind_font_before_render` 开关也保留供旧模式使用；新模式统一在实际字符缓冲的字形查找入口选择字体，无需该开关。
+旧版保存的 profiles 使用已发布的旧字体标识或模式时，校验器只迁移已知元数据；所有 schema、控件选择器、guard 和 adjust 仍严格校验，合法的用户调整值保留。其他旧或未知元数据不自动接受。主页 Rank 的旧替换字体字号补偿参数仅旧 `replace-all` 模式使用，新模式的纯 Latin Rank 保留原字体布局。HomeTalk 的旧 `rebind_font_before_render` 开关也保留供旧模式使用；新模式统一在实际字符缓冲的字形查找入口选择字体，无需该开关。
 
 留言板列表的单行标题有额外的字体兼容规则：仅识别 `ForumThreadListCell(Clone)/Button/Title` 的完整场景路径、740×49 Unity 单位和原字号48，且省略／截断模式下实际替换字体首行过高、原字体首行能容纳时，独立规范该控件的字体纵向度量。原字号、文字框和剧情字体度量不变。按控件保留共享替换字体图集的静态副本，文本改变时检查本体字形表，按需预暖新字形及省略号，再确认覆盖完整；不以 `TryAddCharacters` 返回值判断覆盖（全部字形已存在时也可能返回 false）。控件销毁或恢复原字体后释放副本；不按玩家帖子内容建立永久缓存。这是受控的渲染兼容规则，不是玩家文本翻译规则。
 

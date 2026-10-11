@@ -6,9 +6,8 @@ from pathlib import Path
 DEFAULT_FONT_MODE = "replace-ui"
 INDEPENDENT_FONT_MODES = ("preserve-non-cjk", DEFAULT_FONT_MODE)
 DEFAULT_PATCH_MODE = "module-font"
-# Stable Unity asset ID retained for saved settings and older LSPatch packages.
-# The actual font family is selected by config/font-source.json.
-INDEPENDENT_FONT_NAME = "Localify-ResourceHanRoundedSC-ExtraBold"
+# Independent of the selected family/weight in config/font-source.json.
+INDEPENDENT_FONT_NAME = "Localify-DefaultCJK"
 # Exact family names from the controlled source specification, plus historical
 # payloads that deployment inspection still needs to recognize.
 _FONT_SOURCE = json.loads((Path(__file__).resolve().parents[1] /

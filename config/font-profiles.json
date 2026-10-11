@@ -3,7 +3,7 @@
   "game_version": "6.0.2",
   "font": {
     "mode": "replace-ui",
-    "unity_font_name": "Localify-ResourceHanRoundedSC-ExtraBold"
+    "unity_font_name": "Localify-DefaultCJK"
   },
   "profiles": [
     {
@@ -26,7 +26,8 @@
         "outline_width": 0.35,
         "face_dilate": 0.35,
         "character_spacing_unity": 16,
-        "font_size_unity": 54
+        "font_size_unity": 54,
+        "original_punctuation": true
       }
     },
     {
@@ -113,8 +114,9 @@
         ]
       },
       "adjust": {
-        "line_spacing_delta_unity": -15.8,
-        "anchored_y_delta_unity": 9
+        "line_spacing_delta_unity": 0,
+        "anchored_y_delta_unity": 0,
+        "original_punctuation": true
       }
     },
     {
@@ -137,7 +139,8 @@
       },
       "adjust": {
         "font_size_ratio": 0.875,
-        "anchored_y_delta_unity": 12
+        "anchored_y_delta_unity": 12,
+        "original_punctuation": true
       }
     },
     {

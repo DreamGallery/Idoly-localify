@@ -42,6 +42,8 @@ int main() {
     assert(constrainedTitle("Other/Choice Button 1/Animation Root/Text") == ConstrainedTitle::None);
     const std::string medal = "WindowSystem/WindowRoot/LiveWindow(Clone)/GuildWindow(Clone)/GuildTopScreen(Clone)/ScreenCanvas/ScreenRoot/UnionMedal/Amount";
     assert(constrainedTitle(medal) == ConstrainedTitle::GuildMedal);
+    assert(constrainedTitle("WindowSystem/WindowRoot/HomeWindow(Clone)/GuildWindow(Clone)/GuildTopScreen(Clone)/ScreenCanvas/ScreenRoot/UnionMedal/Amount") == ConstrainedTitle::GuildMedal);
+    assert(constrainedTitle(medal + "/Other") == ConstrainedTitle::None);
     assert(constrainedTitleUsesAutoSize(ConstrainedTitle::GuildMedal));
     assert(constrainedTitleMetricsGuard(medal,360,33,32,0,replacement,original));
     // Captured size 22.75 is the result of height fitting. Validate against

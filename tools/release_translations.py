@@ -521,11 +521,14 @@ def main():
         if not args.skip_apk and (args.dry_run or needs_apk(existing_apk, version)):
             apk_notes = plugin_release_notes(project, version)
             if not args.font_bundle.is_file(): raise ValueError('Configured module font bundle is missing')
-            target = project / 'app/src/main/assets/idoly-localify/resource-han-rounded.bundle'
             # The persistent runner bundle is a schema template, not the selected
             # typeface. Rebuild it from the source-controlled, hash-pinned default.
             from prepare_module_font import prepare
-            prepare(args.font_bundle, target, cache=work / 'fonts')
+            for bundle, font_config in (
+                    ('resource-han-rounded.bundle', 'font-source.json'),
+                    ('love-rounded.bundle', 'love-font-source.json')):
+                prepare(args.font_bundle, project / 'app/src/main/assets/idoly-localify' / bundle,
+                        cache=work / 'fonts', config=project / 'config' / font_config)
             run([project / 'gradlew', ':app:assembleRelease', '--no-daemon'], project)
             apk = output / f'idoly-localify-{version}.apk'
             shutil.copyfile(project / 'app/build/outputs/apk/release/app-release.apk', apk)

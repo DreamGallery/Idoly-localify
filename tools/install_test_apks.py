@@ -30,7 +30,7 @@ def install(base: Path, split: Path, serial: str, expected_avd: str,
                         allow_untested_version=allow_untested_version)
     assert_expected_avd(adb_bin, serial, expected_avd)
     if not check_only:
-        subprocess.run([adb_bin, "-s", serial, "install-multiple", "-r",
+        subprocess.run([adb_bin, "-s", serial, "install-multiple", "--no-incremental", "-r",
                         str(base), str(split)], check=True)
     return version
 

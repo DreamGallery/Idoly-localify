@@ -12,7 +12,8 @@ from check_runtime_images import read_directory, validate as validate_images
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = 'assets/idoly-localify/'
 PAYLOADS = {'dict.json', 'web-notice.json', 'card-stories.json',
-            'event-stories.json', 'love-stories.json', 'resource-han-rounded.bundle'}
+            'event-stories.json', 'love-stories.json', 'resource-han-rounded.bundle',
+            'love-rounded.bundle'}
 # Removed ad-hoc probes must not return to a distributed native library.
 DIAGNOSTIC_MARKERS = (b'HomeTalk glyph diagnostic:', b'Message picker geometry:',
                       b'Constrained title route:', b'Constrained title geometry after:',
@@ -47,16 +48,25 @@ def check(apk, project=ROOT):
                 binary = archive.read(name)
                 if any(marker in binary for marker in DIAGNOSTIC_MARKERS):
                     raise ValueError('Ad-hoc diagnostic probe remains in a native library')
-        bundle = archive.read(ASSETS + 'resource-han-rounded.bundle')
-    environment = UnityPy.load(bundle)
-    fonts = [obj for obj in environment.objects if obj.type.name == 'Font']
-    if len(fonts) != 1:
-        raise ValueError('Expected one standalone replacement font')
-    font = bytes(fonts[0].read_typetree()['m_FontData'])
-    spec = json.loads((project / 'config/font-source.json').read_text())
-    verify_font(font, spec)
-    report = verify(bundle, font)
-    return {'font_sha256': report['font_sha256'], 'font_weight': spec['weight'],
+        reports = {}
+        for bundle_name, config_name in (
+                ('resource-han-rounded.bundle', 'font-source.json'),
+                ('love-rounded.bundle', 'love-font-source.json')):
+            bundle = archive.read(ASSETS + bundle_name)
+            environment = UnityPy.load(bundle)
+            fonts = [obj for obj in environment.objects if obj.type.name == 'Font']
+            if len(fonts) != 1:
+                raise ValueError('Expected one standalone replacement font per bundle')
+            font = bytes(fonts[0].read_typetree()['m_FontData'])
+            spec = json.loads((project / 'config' / config_name).read_text())
+            verify_font(font, spec)
+            identity = spec.get('bundle', {})
+            options = {'font_name': identity['font_name']} if 'font_name' in identity else {}
+            report = verify(bundle, font, **options)
+            reports[bundle_name] = {'sha256': report['font_sha256'], 'weight': spec['weight']}
+    main_font = reports['resource-han-rounded.bundle']
+    return {'font_sha256': main_font['sha256'], 'font_weight': main_font['weight'],
+            'fonts': reports,
             'automatic_capture': False, 'payload_files': len(payloads),
             'runtime_atlases': len(images) - 1}
 

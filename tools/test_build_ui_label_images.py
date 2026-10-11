@@ -2,10 +2,11 @@ from copy import deepcopy
 import struct
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
-from build_ui_label_images import fill_enclosed_transparency, mesh_mask, render_label, restore_solid_label_background, validate_rectangle_image
+from build_ui_label_images import fill_enclosed_transparency, mesh_mask, render_label, restore_sampled_label_background, restore_solid_label_background, validate_rectangle_image
 
 
 class LabelMeshTests(unittest.TestCase):
@@ -52,6 +53,28 @@ class LabelMeshTests(unittest.TestCase):
         args = (Path('unused.ttf'), [255] * 4, [255] * 4, Image.new('L', (20, 10), 255))
         with self.assertRaisesRegex(ValueError, 'nonempty text'):
             render_label((20, 10), {'text': ''}, *args)
+
+    def test_canvas_clipping_cannot_make_oversized_text_pass(self):
+        item = {'sprite': 'label', 'text': 'WWWW', 'font_size': 10, 'min_font_size': 10,
+                'mesh_margin': 0, 'orientation': 'horizontal', 'strokes': []}
+        font = ImageFont.load_default()
+        with patch('build_ui_label_images.ImageFont.truetype', return_value=font):
+            with self.assertRaisesRegex(ValueError, 'cannot fit'):
+                render_label((5, 5), item, Path('unused.ttf'), [255] * 4,
+                             [255] * 4, Image.new('L', (5, 5), 255))
+
+    def test_sampled_gradient_preserves_curved_outline(self):
+        original = Image.new('RGBA', (10, 4))
+        expected = original.copy()
+        for y, (left, right) in enumerate([(3, 6), (2, 7), (2, 7), (3, 6)]):
+            color = (20 + y * 10, 180 + y * 5, 200 + y * 5, 255)
+            for image in (original, expected):
+                draw = ImageDraw.Draw(image)
+                draw.line((left-1, y, right+1, y), fill=(255, 255, 255, 255))
+                draw.line((left, y, right, y), fill=color)
+            ImageDraw.Draw(original).line((4, y, 5, y), fill=(255, 255, 255, 255))
+        result = restore_sampled_label_background(original, [1, 0, 9, 4], [3, 6])
+        self.assertEqual(result.tobytes(), expected.crop((1, 0, 9, 4)).tobytes())
 
     def test_closed_counter_filled_but_open_counter_and_outer_alpha_preserved(self):
         image = Image.new('RGBA', (20, 10))

@@ -1,14 +1,20 @@
 // Loaded on the Unity thread from a font-routing callback. The module delivers
 // this bundle before nativeInstall; it is never downloaded or replaced in play.
-void* loadStandaloneReplacementFont(bool report) {
-    static uint32_t bundleHandle = 0;
-    static std::chrono::steady_clock::time_point retryAt{};
+void* loadStandaloneReplacementFont(bool report, bool rounded = false) {
+    struct BundleState { uint32_t handle = 0; std::chrono::steady_clock::time_point retryAt{}; };
+    static BundleState states[2];
+    auto& bundleHandle = states[rounded ? 1 : 0].handle;
+    auto& retryAt = states[rounded ? 1 : 0].retryAt;
+    const auto path = rounded ? standaloneFontBundlePath.substr(0, standaloneFontBundlePath.rfind('/') + 1)
+        + "love-rounded.bundle" : standaloneFontBundlePath;
+    const char* key = rounded ? "localify-loveroundedsc" : "localify-defaultcjk";
+    const char* fontName = rounded ? "Localify-LoveRoundedSC" : "Localify-DefaultCJK";
     const auto now = std::chrono::steady_clock::now();
     if (now < retryAt || standaloneFontBundlePath.empty() || !runtimeInvoke ||
         !stringNew || !classGetType || !typeGetObject || !gcHandleNew ||
         !gcHandleGetTarget || !objectGetClass || !classIsAssignableFrom) return nullptr;
     retryAt = now + std::chrono::seconds(10);
-    std::ifstream input(standaloneFontBundlePath, std::ios::binary | std::ios::ate);
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) return nullptr;
     const auto size = input.tellg();
     char header[8]{};
@@ -42,7 +48,7 @@ void* loadStandaloneReplacementFont(bool report) {
     void* bundle = bundleHandle ? gcHandleGetTarget(bundleHandle) : nullptr;
     if (!bundle) {
         if (loadFile) {
-            void* args[] = {stringNew(standaloneFontBundlePath.c_str())};
+            void* args[] = {stringNew(path.c_str())};
             bundle = runtimeInvoke(loadFile, nullptr, args, &exception);
         } else {
             // IL2CPP may strip the unused file overload; the game already uses
@@ -63,19 +69,20 @@ void* loadStandaloneReplacementFont(bool report) {
         }
         bundleHandle = gcHandleNew(bundle, false);
     }
-    // Keep the historical asset key stable across typeface upgrades.
-    void* args[] = {stringNew("localify-resourcehanroundedsc-extrabold"),
+    // Asset identity is independent of the selected family and weight.
+    void* args[] = {stringNew(key),
                     typeGetObject(classGetType(fontClass))};
     void* font = runtimeInvoke(loadAsset, bundle, args, &exception);
     bool valid = !exception && font && classIsAssignableFrom(fontClass, objectGetClass(font));
     if (valid) {
         auto* name = static_cast<Il2CppString*>(runtimeInvoke(getName, font, nullptr, &exception));
-        valid = !exception && utf8(name) == "Localify-ResourceHanRoundedSC-ExtraBold";
+        valid = !exception && utf8(name) == fontName;
     }
     if (valid && setCachedFontRetention(font, true)) {
-        loadedReplacementFontHandle = gcHandleNew(font, false);
-        if (loadedReplacementFontHandle) {
-            LOGI("Loaded standalone replacement font from module bundle (%lld bytes)", static_cast<long long>(size));
+        auto& fontHandle = rounded ? loadedRoundedFontHandle : loadedReplacementFontHandle;
+        fontHandle = gcHandleNew(font, false);
+        if (fontHandle) {
+            LOGI("Loaded standalone replacement font %s (%lld bytes)", fontName, static_cast<long long>(size));
             return font;
         }
     }

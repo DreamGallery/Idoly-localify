@@ -116,6 +116,7 @@ final class FontProfileEditor {
         switch (name) {
             case "outline_width": return "描边宽度";
             case "outline_outward": return "描边向外扩展";
+            case "original_punctuation": return "标点使用原版字体";
             case "face_color_rgba": return "文字颜色 (RGBA)";
             case "outline_color_rgba": return "描边颜色 (RGBA)";
             case "vertex_color_rgba": return "叠加颜色 (RGBA)";

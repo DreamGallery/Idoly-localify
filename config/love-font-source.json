@@ -1,0 +1,16 @@
+{
+  "family": "Resource Han Rounded SC VF",
+  "style": "Bold",
+  "weight": 700,
+  "sha256": "9766fe62a37bc6366a7583fd3fdc99923afc745ce1e268ae79ef49a4d273b07d",
+  "bundle": {
+    "name": "love-rounded.bundle",
+    "font_name": "Localify-LoveRoundedSC"
+  },
+  "source": {
+    "path": "font-sources/ResourceHanRoundedSC-Bold.otf.gz",
+    "format": "gzip",
+    "sha256": "d4014a9adb8556171fda87e9f3b4988367e714007d96822141f4efac7c8fecd2",
+    "upstream": "https://github.com/CyanoHao/Resource-Han-Rounded/releases/tag/v1.910"
+  }
+}

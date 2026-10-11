@@ -351,7 +351,12 @@ def main() -> None:
             modified = image_modified
         sign_args = ("--ks", str(args.keystore), "--ks-pass", "env:IDOLY_KEYSTORE_PASSWORD",
                      "--key-pass", "env:IDOLY_KEYSTORE_PASSWORD")
-        run(signer, "sign", *sign_args, "--out", str(signed_modified), str(modified), env=env)
+        if args.font_patch_mode == "module-font" and args.image_patches is None:
+            # LSPatch records this input's signing identity. Runtime-only
+            # replacements leave the original APK and its certificate intact.
+            shutil.copyfile(modified, signed_modified)
+        else:
+            run(signer, "sign", *sign_args, "--out", str(signed_modified), str(modified), env=env)
         patched_dir = work / "lspatch"
         patched_dir.mkdir()
         run(java, "-Xmx4g", "-jar", str(args.lspatch), "-f", "-d", "-l", "2",
@@ -371,6 +376,10 @@ def main() -> None:
                 signer, split_out, env):
             raise ValueError("Signed test base and split APK certificates differ")
         verify_embedded(base_out, args.module, args.font, args.font_patch_mode, args.base)
+        if args.font_patch_mode == "module-font" and args.image_patches is None:
+            with ZipFile(base_out) as wrapped:
+                if wrapped.read("assets/lspatch/origin.apk") != args.base.read_bytes():
+                    raise ValueError("Runtime-only patch changed the original APK or signature")
         if args.image_patches is not None:
             from patch_images import verify_apk as verify_image_apk
             with ZipFile(base_out) as wrapped:

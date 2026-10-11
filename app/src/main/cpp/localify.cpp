@@ -34,6 +34,8 @@
 #include "premium_gacha_labels.h"
 #include "gacha_pickup_layout.h"
 #include "guild_medal_font.h"
+#include "love_font_policy.h"
+#include "story_punctuation.h"
 #include "shop_exchange_description_matcher.h"
 #include "story_bridge.h"
 #include "font_profile_config.h"
@@ -184,6 +186,7 @@ FontMode fontMode = FontMode::Fallback;
 uint32_t fallbackFontAssetHandle = 0;
 uint32_t loadedFontHandle = 0;
 uint32_t loadedReplacementFontHandle = 0;
+uint32_t loadedRoundedFontHandle = 0;
 std::string standaloneFontBundlePath;
 struct ReplacementFontPair { uint32_t replacementHandle; uint32_t originalHandle; };
 std::unordered_map<void*, ReplacementFontPair> labelReplacementAssets;
@@ -299,6 +302,17 @@ using AssetLoadFn = void (*)(void*, Il2CppString*, void*, void*, void*);
 using GetBlobFn = void (*)(void*, int32_t, void**, int32_t*, void*);
 using CanvasWillRenderFn = void (*)(void*);
 using SetArraySizesFn = int32_t (*)(void*, void*, void*);
+using GetCharacterFn = void* (*)(uint32_t, void*, bool, int32_t, int32_t, bool*, void*);
+GetCharacterFn origGetCharacter = nullptr;
+thread_local void* currentStoryPunctuationFont = nullptr;
+void* storyPunctuationFont(void* self);
+struct StoryPunctuationScope {
+    void* previous;
+    explicit StoryPunctuationScope(void* self) : previous(currentStoryPunctuationFont) {
+        currentStoryPunctuationFont = storyPunctuationFont(self);
+    }
+    ~StoryPunctuationScope() { currentStoryPunctuationFont = previous; }
+};
 using FitLayoutFn = void (*)(void*, int32_t, void*);
 
 InitFn origInit = nullptr;
@@ -1304,6 +1318,7 @@ void fitCapturedButtonLabel(void* self) {
 #include "panorama_label_runtime.inc"
 #include "gallery_footer_layout.inc"
 #include "love_mission_layout.inc"
+#include "love_home_layout.inc"
 #include "gacha_pickup_layout.inc"
 #include "guild_top_layout.inc"
 #include "activity_result_layout.inc"
@@ -1649,6 +1664,8 @@ void hookTmpPreRender(void* self, void* method) {
     }
     fitCapturedButtonLabel(self);
     applyPortraitNameLayout(self);
+    centerLoveHomeDialogue(self);
+    StoryPunctuationScope punctuation(self);
     origTmpPreRender(self, method);
     synchronizeTmpRendererMaterial(self);
     captureTextLayout(self);
@@ -2474,9 +2491,9 @@ bool setCachedFontRetention(void* object, bool retained) {
 
 #include "standalone_font_bundle.inc"
 
-void* loadedCjkFont(bool independentReplacement = false) {
+void* loadedCjkFont(bool independentReplacement = false, bool rounded = false) {
     std::lock_guard<std::recursive_mutex> lock(fontMutex);
-    auto& handle = independentReplacement ? loadedReplacementFontHandle : loadedFontHandle;
+    auto& handle = rounded ? loadedRoundedFontHandle : independentReplacement ? loadedReplacementFontHandle : loadedFontHandle;
     if (handle && gcHandleGetTarget) {
         void* cached = gcHandleGetTarget(handle);
         if (cached) return cached;
@@ -2488,8 +2505,8 @@ void* loadedCjkFont(bool independentReplacement = false) {
         FontScanClock::time_point nextScan{};
         FontScanClock::time_point nextDiagnostic{};
     };
-    static FontScanState scans[2];
-    auto& scan = scans[independentReplacement ? 1 : 0];
+    static FontScanState scans[3];
+    auto& scan = scans[rounded ? 2 : independentReplacement ? 1 : 0];
     const auto now = FontScanClock::now();
     if (now < scan.nextScan) return nullptr;
     scan.nextScan = now + std::chrono::seconds(2);
@@ -2498,7 +2515,7 @@ void* loadedCjkFont(bool independentReplacement = false) {
     // Current modes use only the module's selected font. A temporary bundle
     // failure must not cache an older embedded typeface under the same asset
     // key and prevent every subsequent module retry.
-    if (independentReplacement) return loadStandaloneReplacementFont(report);
+    if (independentReplacement) return loadStandaloneReplacementFont(report, rounded);
     const char* wanted = "FOT-UDKakugo_LargePro-DB";
     void* klass = findClass("UnityEngine.TextRenderingModule.dll", "UnityEngine", "Font");
     const auto findAll = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine",
@@ -2742,8 +2759,8 @@ bool normalizePickerFaceInfo(void* replacement, void* original) {
         metric *= ratio;
         fieldSetValue(target, field, &metric);
     }
-    // Only this independently created picker asset receives original vertical
-    // line metrics. replacement glyphs, atlas, point size, scale and widths stay intact.
+    // Only the independently created asset receives original vertical line
+    // metrics. Glyphs, atlas, point size, scale and widths stay intact.
     void* args[] = {objectUnbox(target)};
     runtimeInvoke(setFace, replacement, args, &error);
     if (error) return false;
@@ -3092,13 +3109,20 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
                         normal = gcHandleGetTarget(normalCached->second.replacementHandle);
                 }
                 if (!normal) {
-                    void* font = loadedCjkFont(true);
+                    auto* originalName = static_cast<Il2CppString*>(readFontProperty(originalAsset,
+                        "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
+                    const bool rounded = love_font_policy::usesRoundedReplacement(utf8(originalName));
+                    void* font = loadedCjkFont(true, rounded);
                     if (!font) return;
                     void* createArgs[] = {font};
                     normal = ordinaryStory ? createStoryFont(font, originalAsset, roleMaterial)
                         : runtimeInvoke(createFallback, nullptr, createArgs, &exception);
                     if (!normal && ordinaryStory) LOGE("Cannot create ordinary-story SDF font");
                     if (exception || !normal) return;
+                    // The game's Love prefabs share this face across dialogue,
+                    // choices and menus. Preserve their original vertical metrics
+                    // before layout or automatic size fitting sees the new face.
+                    if (rounded && !normalizePickerFaceInfo(normal, originalAsset)) return;
                     if (!setCachedFontRetention(normal, true)) {
                         LOGE("Cannot retain cached replacement font resources");
                         return;
@@ -3400,6 +3424,36 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
     LOGI("Attached CJK fallback to TMP font asset");
 }
 
+void* storyPunctuationFont(void* self) {
+    if (!fontEnabled || !usesIndependentFontRouting() || !self) return nullptr;
+    auto* name = static_cast<Il2CppString*>(readFontProperty(self,
+        "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
+    const auto label = utf8(name);
+    if (label != "Message Label" && label != "Message Text" && label != "Serif") return nullptr;
+    const char* profile = story_punctuation::profile(textObjectPath(self));
+    if (!profile || !profileFlag(profile, "original_punctuation")) return nullptr;
+    void* font = readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font");
+    const auto original = labelOriginalFonts.find(font);
+    return original != labelOriginalFonts.end() && unityObjectAlive(original->second) ? original->second : nullptr;
+}
+
+void* hookGetCharacter(uint32_t unicode, void* font, bool fallbacks, int32_t style,
+                       int32_t weight, bool* alternative, void* method) {
+    // Let TMP build its normal per-character font/material references. No rich
+    // text is inserted, so the game's typewriter offsets and logs stay unchanged.
+    if (currentStoryPunctuationFont && font != currentStoryPunctuationFont &&
+        story_punctuation::isPunctuation(unicode) && labelOriginalFonts.count(font)) {
+        bool nativeAlternative = false;
+        void* character = origGetCharacter(unicode, currentStoryPunctuationFont, false,
+            style, weight, &nativeAlternative, method);
+        if (character) {
+            if (alternative) *alternative = nativeAlternative;
+            return character;
+        }
+    }
+    return origGetCharacter(unicode, font, fallbacks, style, weight, alternative, method);
+}
+
 void routeTmpFontAfterSetter(void* textObject) {
     if (!fontEnabled || !usesIndependentFontRouting() || !textObject) return;
     updateFont(textObject);
@@ -3545,7 +3599,7 @@ void* prepareFormattedUiGlyphs(void* self, void* array) {
     if (!medal && !activity && !duration) return array;
     const auto path = textObjectPath(self);
     std::string desired;
-    if (medal && path == guild_medal_font::path) desired = guildMedalRenderedText(self, text);
+    if (medal && guild_medal_font::matches(path)) desired = guildMedalRenderedText(self, text);
     else if (activity) desired = homeActivityNames.translate(text, path);
     else if (duration) desired = homeActivityNames.translateDuration(text, path, durationPattern->second);
     if (desired.empty() || desired == text) return array;
@@ -3562,11 +3616,13 @@ int32_t hookTmpUiSetArraySizes(void* self, void* array, void* method) {
     array = prepareLoveEpisodeGlyphs(self, array);
     array = prepareFormattedUiGlyphs(self, array);
     routeTmpFontBeforeGlyphLookup(self, array);
+    StoryPunctuationScope punctuation(self);
     const int32_t result = origTmpUiSetArraySizes(self, array, method);
     return result;
 }
 int32_t hookTmp3dSetArraySizes(void* self, void* array, void* method) {
     routeTmpFontBeforeGlyphLookup(self, array);
+    StoryPunctuationScope punctuation(self);
     const int32_t result = origTmp3dSetArraySizes(self, array, method);
     return result;
 }
@@ -3673,6 +3729,9 @@ void installTextHooks() {
     installed += installMethod("TMP_Text.set_text",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_text", 1),
         reinterpret_cast<void*>(hookTmpSetText), origTmpSetText);
+    installed += installMethod("TMP_FontAssetUtilities.GetCharacterFromFontAsset",
+        methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_FontAssetUtilities", "GetCharacterFromFontAsset", 6),
+        reinterpret_cast<void*>(hookGetCharacter), origGetCharacter);
     installed += installMethod("TextMeshProUGUI.OnEnable",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TextMeshProUGUI", "OnEnable", 0),
         reinterpret_cast<void*>(hookTmpOnEnable), origTmpOnEnable);

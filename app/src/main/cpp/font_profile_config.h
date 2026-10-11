@@ -24,10 +24,17 @@ public:
             // complete schema/selectors/guards/adjustments are validated below.
             const Json legacyFont = {{"mode", "replace-all"},
                 {"unity_font_name", "FOT-UDKakugo_LargePro-DB"}};
-            const Json previousFont = {{"mode", "preserve-non-cjk"},
+            Json previousFont = defaults["font"];
+            previousFont["mode"] = "preserve-non-cjk";
+            // Recognize the shipped resource ID only when importing settings;
+            // no font asset or runtime route uses this retired ID.
+            const Json retiredFont = {{"mode", "replace-ui"},
                 {"unity_font_name", "Localify-ResourceHanRoundedSC-ExtraBold"}};
+            Json retiredPreviousFont = retiredFont;
+            retiredPreviousFont["mode"] = "preserve-non-cjk";
             if (candidate.contains("font") &&
-                (candidate["font"] == legacyFont || candidate["font"] == previousFont) &&
+                (candidate["font"] == legacyFont || candidate["font"] == previousFont ||
+                 candidate["font"] == retiredFont || candidate["font"] == retiredPreviousFont) &&
                 defaults["font"].value("mode", std::string()) == "replace-ui")
                 candidate["font"] = defaults["font"];
             for (const auto& entry : defaults.items()) {
@@ -39,6 +46,23 @@ public:
             // settings. All original selectors, guards and adjustments remain
             // strictly validated below; missing required profiles still fail.
             if (candidate.contains("profiles") && candidate["profiles"].is_array()) {
+                for (auto& item : candidate["profiles"]) {
+                    if (!item.is_object() || !item.contains("adjust") || !item["adjust"].is_object()) continue;
+                    for (const auto& baseline : defaults["profiles"]) {
+                        if (item.value("id", std::string()) != baseline["id"] ||
+                            !baseline["adjust"].contains("original_punctuation") ||
+                            item["adjust"].contains("original_punctuation")) continue;
+                        item["adjust"]["original_punctuation"] = baseline["adjust"]["original_punctuation"];
+                        // The rounded face now carries the native line metrics.
+                        // Migrate the old default offsets, retaining custom values.
+                        if (baseline["id"] == "portrait_love_event_dialogue") {
+                            if (item["adjust"].value("line_spacing_delta_unity", 0.0) == -15.8)
+                                item["adjust"]["line_spacing_delta_unity"] = 0;
+                            if (item["adjust"].value("anchored_y_delta_unity", 0.0) == 9)
+                                item["adjust"]["anchored_y_delta_unity"] = 0;
+                        }
+                    }
+                }
                 // The portrait pill sizes itself to its name. Retire the old
                 // character-count auto-fit toggle, retaining all user values.
                 for (auto& item : candidate["profiles"])

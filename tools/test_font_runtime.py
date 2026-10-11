@@ -31,6 +31,9 @@ class FontRuntimeTests(unittest.TestCase):
     def test_love_episode_label_scope_and_dynamic_number(self):
         self.run_fixture("test_love_episode_label")
 
+    def test_love_font_routing_and_story_punctuation_scope(self):
+        self.run_fixture("test_love_font_policy")
+
     def test_panorama_font_scope_and_paired_layout(self):
         self.run_fixture("test_panorama_font_labels")
 

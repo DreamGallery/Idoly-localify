@@ -11,6 +11,26 @@ int main() {
     assert(profile.assign(changed.dump()));
     assert(profile.value("ordinary_story_subtitle", "outline_width") == 0.6f);
     const std::string good = profile.dump();
+    auto oldPunctuation = nlohmann::json::parse(good);
+    for (auto& item : oldPunctuation["profiles"]) {
+        item["adjust"].erase("original_punctuation");
+        if (item["id"] == "portrait_love_event_dialogue") {
+            item["adjust"]["line_spacing_delta_unity"] = -15.8;
+            item["adjust"]["anchored_y_delta_unity"] = 9;
+        }
+    }
+    assert(profile.assign(oldPunctuation.dump()));
+    assert(profile.dump() == good);
+    for (auto& item : oldPunctuation["profiles"])
+        if (item["id"] == "portrait_love_event_dialogue") {
+            item["adjust"]["line_spacing_delta_unity"] = -6;
+            item["adjust"]["anchored_y_delta_unity"] = 3;
+        }
+    assert(profile.assign(oldPunctuation.dump()));
+    assert(profile.value("portrait_love_event_dialogue", "line_spacing_delta_unity") == -6);
+    assert(profile.value("portrait_love_event_dialogue", "anchored_y_delta_unity") == 3);
+    assert(profile.flag("portrait_love_event_dialogue", "original_punctuation"));
+    assert(profile.assign(good));
     auto oldPortrait = nlohmann::json::parse(good);
     for (auto& item : oldPortrait["profiles"])
         if (item["id"] == "portrait_love_event_name")
@@ -57,6 +77,20 @@ int main() {
     auto previous = nlohmann::json::parse(good);
     previous["font"]["mode"] = "preserve-non-cjk";
     assert(profile.assign(previous.dump()));
+    assert(profile.dump() == good);
+    for (const auto* mode : {"replace-ui", "preserve-non-cjk"}) {
+        auto retired = nlohmann::json::parse(good);
+        retired["font"] = {{"mode", mode},
+            {"unity_font_name", "Localify-ResourceHanRoundedSC-ExtraBold"}};
+        assert(profile.assign(retired.dump()));
+        assert(profile.dump() == good); // Keep saved outline/layout adjustments.
+        retired["profiles"][0]["path_suffix"] = {"Other"};
+        assert(!profile.assign(retired.dump()));
+        assert(profile.dump() == good);
+    }
+    auto unknownFont = nlohmann::json::parse(good);
+    unknownFont["font"]["unity_font_name"] = "UnknownFont";
+    assert(!profile.assign(unknownFont.dump()));
     assert(profile.dump() == good);
     auto invalidPrevious = previous;
     invalidPrevious["profiles"][0]["path_suffix"] = {"Other"};

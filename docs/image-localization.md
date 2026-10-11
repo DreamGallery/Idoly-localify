@@ -18,14 +18,14 @@ python3 tools/build_runtime_images.py --base /path/to/original/base.apk --patche
 
 ## 修改图片文字
 
-`config/button-images.json` 与 `config/ui-label-images.json` 维护圆形按钮、若恋标签及工作标签的译名、文字区域及字体校验。图片文字使用 `config/font-source.json` 中与游戏替换字体一致的 Noto Sans CJK SC SemiBold（字重 600）。使用 UnityPy、Pillow 和该字体生成候选图片：
+`config/button-images.json` 与 `config/ui-label-images.json` 维护圆形按钮、若恋标签及工作标签的译名、文字区域及字体校验。普通图片文字使用 Noto Sans CJK SC SemiBold（字重 600），若恋图片使用 Resource Han Rounded SC Bold（字重 700），与对应界面的替换字体一致。构建模块字体后，静态圆体位于指定缓存目录，文件名为 `config/love-font-source.json` 的 SHA-256 加 `.otf`。使用 UnityPy、Pillow 和两份字体生成候选图片：
 
 ```sh
 python3 tools/build_button_images.py --base /path/to/original/base.apk --font /path/to/LocalifyNotoSansCJKsc-SemiBold.otf --output-dir .analysis/button-images
-python3 tools/build_ui_label_images.py --base /path/to/original/base.apk --font /path/to/LocalifyNotoSansCJKsc-SemiBold.otf --merge-manifest .analysis/button-images/manifest.json --output-dir .analysis/ui-label-images
+python3 tools/build_ui_label_images.py --base /path/to/original/base.apk --font /path/to/LocalifyNotoSansCJKsc-SemiBold.otf --label-font love=/path/to/ResourceHanRoundedSC-Bold.otf --merge-manifest .analysis/button-images/manifest.json --output-dir .analysis/ui-label-images
 ```
 
-生成器校验允许编辑区域及外围像素，保留按钮边框和采样留白。扭蛋票券先按原轮廓补全，再叠加中文及描边；封闭字腔填入描边底色，外侧保持透明。审核对照图和游戏实际显示后，用本仓库的 `tools/export_image_pack.py` 转为区域包，再构建运行时载荷。截图、预览、原版 APK 和字体文件不提交源码仓库。
+生成器校验允许编辑区域及外围像素，保留按钮边框和采样留白。扭蛋票券先按原轮廓补全，再叠加中文及描边；封闭字腔填入描边底色，外侧保持透明。审核对照图和游戏实际显示后，用本仓库的 `tools/export_image_pack.py` 转为区域包，再构建运行时载荷。截图、预览、原版 APK 和生成的字体文件不提交源码仓库。
 
 ```sh
 python3 tools/export_image_pack.py --base /path/to/original/base.apk --manifest .analysis/ui-label-images/manifest.json --output .analysis/reviewed-image-pack
@@ -35,7 +35,7 @@ python3 tools/check_runtime_images.py
 
 审核后将区域包保存到 `image-patches/`，与运行时图集一并提交。发布流程会校验图集文件，并确认 APK 内的图片与仓库中的审核版本一致。
 
-游戏原美术和商标归各自权利人；GPL 不对原游戏美术授予许可。图片中文字形来自采用 SIL OFL 1.1 的 Noto Sans CJK SC。区域素材与归属说明见本仓库的 [`image-patches/NOTICE.md`](../image-patches/NOTICE.md)。
+游戏原美术和商标归各自权利人；GPL 不对原游戏美术授予许可。图片中文字形来自采用 SIL OFL 1.1 的 Noto Sans CJK SC 与 Resource Han Rounded SC。区域素材与归属说明见本仓库的 [`image-patches/NOTICE.md`](../image-patches/NOTICE.md)。
 
 ## 其他显示规则
 

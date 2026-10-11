@@ -147,16 +147,18 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             catch (Exception error) {
                 Log.w(TAG, "Runtime images unavailable; original images retained", error);
             }
-            try {
-                File font = new File(dataDir, "resource-han-rounded.bundle");
-                boolean installed = BuiltInFontInstaller.install(
-                    () -> openBuiltInAsset(context, font.getName()), font);
-                Log.i(TAG, "Module font bundle " + (installed ? "installed: " : "verified: ") + font);
-            } catch (Exception error) {
-                // A failed update leaves the previous complete bundle available.
-                // Native loading retries the module bundle on later text callbacks.
-                Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
-                    + "existing complete module bundle for retry", error);
+            for (String fontName : new String[]{"resource-han-rounded.bundle", "love-rounded.bundle"}) {
+                try {
+                    File font = new File(dataDir, fontName);
+                    boolean installed = BuiltInFontInstaller.install(
+                        () -> openBuiltInAsset(context, font.getName()), font);
+                    Log.i(TAG, "Module font bundle " + (installed ? "installed: " : "verified: ") + font);
+                } catch (Exception error) {
+                    // A failed update leaves the previous complete bundle available.
+                    // Native loading retries the module bundle on later text callbacks.
+                    Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
+                        + "existing complete module bundle for retry: " + fontName, error);
+                }
             }
             try {
                 File notices = new File(dataDir, "web-notice.json");

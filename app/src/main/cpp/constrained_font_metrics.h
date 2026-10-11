@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 #include "activity_result_layout.h"
+#include "guild_medal_font.h"
 struct FontVerticalMetrics { float pointSize, scale, ascent, descent; };
 inline float fontLineHeight(float size, FontVerticalMetrics m) {
     return m.pointSize > 0 ? (m.ascent - m.descent) * size * m.scale / m.pointSize : 0;
@@ -51,7 +52,7 @@ inline ConstrainedTitle constrainedTitle(const std::string& path) {
     if (const auto* rule = clippedLabelMetricsRule(path))
         return rule->autoSize ? ConstrainedTitle::ClippedAutoLabel : ConstrainedTitle::ClippedLabel;
     if (activity_result_layout::activityName(path)) return ConstrainedTitle::ActivityName;
-    if (path == "WindowSystem/WindowRoot/LiveWindow(Clone)/GuildWindow(Clone)/GuildTopScreen(Clone)/ScreenCanvas/ScreenRoot/UnionMedal/Amount")
+    if (guild_medal_font::matches(path))
         return ConstrainedTitle::GuildMedal;
     static const std::string suffix = "/ForumWindow(Clone)/ForumListScreen(Clone)/ScreenCanvas/ScreenRoot/ContentRoot/ForumThreadRoot/ForumThreadList/Scroll/Viewport/Content/ForumThreadListCell(Clone)/Button/Title";
     if (path.size() >= suffix.size() && path.compare(path.size() - suffix.size(), suffix.size(), suffix) == 0)

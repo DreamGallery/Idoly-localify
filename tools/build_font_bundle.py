@@ -35,7 +35,7 @@ def pointers(value):
             yield from pointers(item)
 
 
-def verify(data, replacement):
+def verify(data, replacement, *, font_name=INDEPENDENT_FONT_NAME):
     env = UnityPy.load(data)
     if len(env.file.files) != 1:
         raise ValueError('Bundle must contain exactly one serialized file, no resource streams')
@@ -44,7 +44,7 @@ def verify(data, replacement):
         raise ValueError('Unexpected objects in standalone bundle')
     trees = {o.type.name: o.read_typetree() for o in objects}
     font = trees['Font']
-    if font['m_Name'] != INDEPENDENT_FONT_NAME or bytes(font['m_FontData']) != replacement:
+    if font['m_Name'] != font_name or bytes(font['m_FontData']) != replacement:
         raise ValueError('Embedded font does not match requested font byte-for-byte')
     if font['m_FontNames'] != [replacement_family(replacement)] or font['m_FallbackFonts']:
         raise ValueError('Font family/fallback mismatch')
@@ -71,13 +71,13 @@ def verify(data, replacement):
     if dict(trees['Material']['m_SavedProperties']['m_TexEnvs'])['_MainTex']['m_Texture'] != ptr(4):
         raise ValueError('Material/texture reference mismatch')
     bundle = trees['AssetBundle']
-    if bundle['m_Container'] != [(ASSET_KEY, {'preloadIndex': 0, 'preloadSize': 3, 'asset': ptr(2)})] or bundle['m_Dependencies']:
+    if bundle['m_Container'] != [(font_name.lower(), {'preloadIndex': 0, 'preloadSize': 3, 'asset': ptr(2)})] or bundle['m_Dependencies']:
         raise ValueError('Unexpected bundle container/dependencies')
     if bundle['m_PreloadTable'] != [ptr(2), ptr(3), ptr(4)]:
         raise ValueError('Unexpected preload table')
     if FONT_NAME.encode() in sf.save():
         raise ValueError('Original font name remains in output')
-    return {'font_name': INDEPENDENT_FONT_NAME, 'asset_key': ASSET_KEY,
+    return {'font_name': font_name, 'asset_key': font_name.lower(),
             'unity_version': sf.unity_version, 'font_bytes': len(replacement),
             'font_sha256': hashlib.sha256(replacement).hexdigest(),
             'bundle_bytes': len(data), 'bundle_sha256': hashlib.sha256(data).hexdigest(),

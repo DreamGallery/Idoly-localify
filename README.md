@@ -6,7 +6,7 @@
 
 - **LSPosed／Vector**：在兼容的 root 设备启用模块，作用域仅选择游戏；使用原版游戏 APK。
 - **LSPatch**：将模块嵌入游戏安装包。字体与汉化图片由模块在运行时加载，保留游戏原始资源。
-- 默认字体为 Noto Sans CJK SC SemiBold，指定数字、价格等控件保留原字体。
+- 通用字体为 Noto Sans CJK SC SemiBold，若恋对白和按钮采用 Resource Han Rounded SC Bold；指定数字、价格等控件保留原字体。
 - 详细设置可关闭翻译、删除本地译文或清理采集文件。翻译开关在重启游戏后生效。
 
 当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建插件需要 Android SDK、NDK、JDK 17+、Python 3.12+；使用 LSPatch 修补游戏需要 JDK 21+。具体依赖和命令见[构建说明](docs/build.md)。
@@ -18,10 +18,11 @@
 | `app/` | Android 模块、原生钩子与运行时界面 |
 | `config/` | 字体、控件与图片处理规则 |
 | `image-patches/` | 已审核的图片编辑区域与来源说明 |
+| `font-sources/` | 可再分发的圆体压缩源文件，构建时校验并解压 |
 | `tools/` | 文本编译、检查、打包及部署工具 |
 | `docs/` | 构建、文本维护与功能说明 |
 
-译文和校对数据维护在 [Idoly-localify-translations](https://github.com/DreamGallery/Idoly-localify-translations)。运行时图片保存在 `app/src/main/assets/idoly-localify/images/`，随插件发布；本机的 `translations/`、下载缓存、生成字典、字体及测试 APK 不随代码仓库提交。
+译文和校对数据维护在 [Idoly-localify-translations](https://github.com/DreamGallery/Idoly-localify-translations)。运行时图片保存在 `app/src/main/assets/idoly-localify/images/`，随插件发布；本机的 `translations/`、下载缓存、生成字典、字体 bundle 及测试 APK 不随代码仓库提交。字体许可证位于 `app/src/main/assets/licenses/`。
 
 配套工具独立维护：[HoshimiToolkit](https://github.com/DreamGallery/HoshimiToolkit) 用于资源获取与脚本转换，[Hoshimi_Teleprompter](https://github.com/DreamGallery/Hoshimi_Teleprompter) 用于模型翻译。路径可配置，见[文本流程](docs/text-pipeline.md)。
 

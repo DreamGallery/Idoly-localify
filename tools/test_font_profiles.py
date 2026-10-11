@@ -32,6 +32,23 @@ class FontProfileTests(unittest.TestCase):
         header = PROFILE.parent.parent / 'app/src/main/cpp/font_profile_defaults.h'
         self.assertEqual(header.read_text(), render_header(self.data))
 
+    def test_retired_font_id_import_keeps_layout_and_rejects_unknown_font(self):
+        for mode in ('replace-ui', 'preserve-non-cjk'):
+            old = copy.deepcopy(self.data)
+            old['font'] = {'mode': mode,
+                           'unity_font_name': 'Localify-ResourceHanRoundedSC-ExtraBold'}
+            old['profiles'][0]['adjust']['outline_width'] = 0.6
+            upgraded = validate(old)
+            self.assertEqual(upgraded['font'], self.data['font'])
+            self.assertEqual(upgraded['profiles'][0]['adjust']['outline_width'], 0.6)
+            old['profiles'][0]['path_suffix'] = ['Other']
+            with self.assertRaises(ValueError):
+                validate(old)
+        invalid = copy.deepcopy(self.data)
+        invalid['font']['unity_font_name'] = 'UnknownFont'
+        with self.assertRaisesRegex(ValueError, 'unsupported font selection'):
+            validate(invalid)
+
     def test_retired_portrait_auto_size_migrates_without_resetting_adjustments(self):
         old = copy.deepcopy(self.data)
         adjust = next(p['adjust'] for p in old['profiles']
