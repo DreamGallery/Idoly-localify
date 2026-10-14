@@ -180,6 +180,7 @@ class DispatchAndOutputsTests(unittest.TestCase):
     def test_plugin_output_survives_later_text_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'github-output'
+            (Path(temporary) / 'manifest.json').write_text('{}')
             with patch.dict(release.os.environ, {'GITHUB_OUTPUT': str(output)}), \
                     patch.object(release, 'publish', side_effect=[{'tag': 'v0.2.5', 'published': True},
                                                                RuntimeError('text failed')]):

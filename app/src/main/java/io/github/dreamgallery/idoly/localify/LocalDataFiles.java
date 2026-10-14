@@ -11,7 +11,8 @@ final class LocalDataFiles {
     static List<File> translations(File directory) throws IOException {
         List<File> result = new ArrayList<>();
         for (String name : new String[]{"dict.json", "dict.installed.sha256", "web-notice.json",
-                "web-notice.installed.sha256", "master-blobs.bin", "installed-text-version.txt"}) {
+                "web-notice.installed.sha256", "master-blobs.bin", "installed-text-version.txt",
+                "card-stories.json", "event-stories.json", "love-stories.json"}) {
             addFile(directory, new File(directory, name), result);
         }
         collect(directory, new File(directory, "resource"), result, true);

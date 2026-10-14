@@ -26,6 +26,7 @@ public final class LocalDataFilesTest {
         Path root = Files.createTempDirectory(Path.of(args[0]), "cleanup-");
         for (String name : new String[]{"dict.json", "dict.installed.sha256", "web-notice.json",
                 "web-notice.installed.sha256", "master-blobs.bin", "installed-text-version.txt",
+                "card-stories.json", "event-stories.json", "love-stories.json",
                 "resource/adv_card_test.txt", "asset/nested/replacement.png", "font-profiles.json",
                 "resource-han-rounded.bundle", "images/atlas-0.png", "octo-settings.json", "update-url.txt",
                 "dump.jsonl", "capture-export-123.jsonl", "capture-export-123.layout.jsonl",
@@ -33,7 +34,7 @@ public final class LocalDataFilesTest {
                 "capture/notes.json", "account-state.json"}) write(root, name);
         File directory = root.toFile();
         int translated = LocalDataFiles.delete(directory, LocalDataFiles.translations(directory));
-        if (translated != 8 || !LocalDataFiles.translations(directory).isEmpty()) throw new AssertionError();
+        if (translated != 11 || !LocalDataFiles.translations(directory).isEmpty()) throw new AssertionError();
         present(root, "font-profiles.json", "resource-han-rounded.bundle", "images/atlas-0.png",
             "octo-settings.json", "update-url.txt", "account-state.json", "capture/text-123.jsonl");
         int captured = LocalDataFiles.delete(directory, LocalDataFiles.captures(directory));

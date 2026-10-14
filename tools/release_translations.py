@@ -124,13 +124,16 @@ def release_output(key, result, dry_run):
 
 def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run, *, target_commit=None):
     from release_latest import publish_latest
+    from story_catalog_payloads import release_catalog_assets
     results = []
     if apk:
         result = publish(repo, 'v' + version, [apk], False, dry_run, notes=apk_notes)
         results.append(result)
         release_output('plugin_tag', result, dry_run)
     result = publish(repo, 'text-' + text_version,
-                     [output / 'text-update.zip', output / 'manifest.json'], False, dry_run, target_commit=target_commit)
+                     [output / 'text-update.zip', output / 'manifest.json'] +
+                     release_catalog_assets(output, repo, 'text-' + text_version),
+                     False, dry_run, target_commit=target_commit)
     results.append(result)
     results.append(publish_latest(repo, output, 'text-' + text_version, dry_run))
     # Retention starts only after the mutable entry points to this complete version.
@@ -140,16 +143,19 @@ def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dr
 def resume_frozen_publication(repo, repository, work):
     """A committed batch is resumed before fetching sources or translating anew."""
     from frozen_release import load_receipt, receipt_commit, cached_assets
+    from story_catalog_payloads import CATALOG_NAMES
     receipt = load_receipt(repository)
     if receipt is None: return False
     text_tag = 'text-' + receipt['text_version']
     text = release_exists(repo, text_tag)
     latest = release_exists(repo, 'latest')
-    expected = {k: v for k, v in receipt['assets'].items() if k in ('manifest.json', 'text-update.zip')}
-    def complete(release):
+    expected = {k: v for k, v in receipt['assets'].items()
+                if k in ('manifest.json', 'text-update.zip', *CATALOG_NAMES)}
+    def complete(release, alias=False):
         assets = {a['name']: a.get('digest') for a in (release or {}).get('assets', [])}
-        return bool(release and not release.get('draft') and all(assets.get(k) == 'sha256:' + v for k, v in expected.items()))
-    if complete(text) and complete(latest):
+        required = {k: v for k, v in expected.items() if not alias or k not in CATALOG_NAMES}
+        return bool(release and not release.get('draft') and all(assets.get(k) == 'sha256:' + v for k, v in required.items()))
+    if complete(text) and complete(latest, alias=True):
         from release_followup import GitHub
         expected_commit = receipt_commit(repository)
         client = GitHub(repo)

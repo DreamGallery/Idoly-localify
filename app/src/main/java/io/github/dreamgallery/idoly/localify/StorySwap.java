@@ -26,6 +26,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Independent, same-format runtime aliases for installed story scripts. */
 final class StorySwap {
@@ -36,7 +37,6 @@ final class StorySwap {
         STATE = kind.equals("card") ? "story-swap.json" : "story-swap-" + kind + ".json";
         CATALOG = kind.equals("card") ? "card-stories.json" : kind + "-stories.json";
     }
-    private final int CATALOG_LIMIT = 1024 * 1024;
 
     private final class StoryItem {
         final String file;
@@ -84,9 +84,59 @@ final class StorySwap {
     }
 
     private void showMenu(Activity activity, File dataDir) {
-        try {
+        background(activity, dataDir, "正在读取剧情目录…", true, () -> {
             List<StoryItem> available = loadAvailable(activity, dataDir);
-            JSONObject active = readState(dataDir, available);
+            return new CatalogSelection(available, readState(dataDir, available));
+        }, selection -> showMenu(activity, dataDir, selection.available, selection.active));
+    }
+
+    private final class CatalogSelection {
+        final List<StoryItem> available;
+        final JSONObject active;
+        CatalogSelection(List<StoryItem> available, JSONObject active) {
+            this.available = available;
+            this.active = active;
+        }
+    }
+    private interface Work<T> { T run() throws Exception; }
+    private interface Ready<T> { void run(T value) throws Exception; }
+
+    private <T> void background(Activity activity, File dataDir, String message,
+                                boolean reading, Work<T> work, Ready<T> ready) {
+        AtomicBoolean canceled = new AtomicBoolean();
+        PluginDialog.Builder builder = new PluginDialog.Builder(activity)
+            .setTitle(category + "剧情替换").setMessage(message);
+        if (reading) builder.setNegativeButton("取消", (dialog, which) -> canceled.set(true))
+            .setOnCancelListener(dialog -> canceled.set(true));
+        Dialog progress = builder.create();
+        progress.setCancelable(reading);
+        progress.setCanceledOnTouchOutside(false);
+        progress.show();
+        new Thread(() -> {
+            T value = null;
+            Exception failure = null;
+            try { value = work.run(); }
+            catch (Exception error) { failure = error; }
+            final T result = value;
+            final Exception error = failure;
+            activity.runOnUiThread(() -> {
+                if (activity.isFinishing() || activity.isDestroyed()) return;
+                progress.dismiss();
+                if (canceled.get()) return;
+                try {
+                    if (error != null) throw error;
+                    ready.run(result);
+                } catch (Exception problem) {
+                    if (reading) showRecovery(activity, dataDir, problem);
+                    else showError(activity, problem);
+                }
+            });
+        }, "IdolyStoryCatalog").start();
+    }
+
+    private void showMenu(Activity activity, File dataDir, List<StoryItem> available,
+                          JSONObject active) {
+        try {
             String message = active == null ? (kind.equals("love") ? "选择想看的特殊活动剧情，再选择活动期间已开放的剧情入口。" :
                 "选择想看的" + category + "剧情，再选择用于播放的" + category + "剧情入口。") :
                 "当前入口：" + labelFor(available, active.getString("entry")) + "\n播放：" +
@@ -249,25 +299,26 @@ final class StorySwap {
             .setMessage("打开这个入口\n" + entry.label() + "\n\n实际播放剧情\n" + source.label() +
                 "\n\n下次进入时生效，可随时恢复。" +
                 (kind.equals("love") ? "\n实验性：选项组数、每组选项数须一致。\n仅限活动开放期间，进度与条件分支仍由原入口决定。" : ""))
-            .setPositiveButton("启用替换", (dialog, which) -> {
-                try {
-                    readState(dataDir, available);
-                    requireInstalled(dataDir, entry.file);
-                    requireInstalled(dataDir, source.file);
-                    if (!compatibleChoices(dataDir, entry.file, source.file))
+            .setPositiveButton("启用替换", (dialog, which) ->
+                background(activity, dataDir, "正在校验并保存替换设置…", false, () -> {
+                    List<StoryItem> current = loadAvailable(activity, dataDir);
+                    readState(dataDir, current);
+                    StoryItem currentEntry = itemFor(current, entry.file);
+                    StoryItem currentSource = itemFor(current, source.file);
+                    requireInstalled(dataDir, currentEntry.file);
+                    requireInstalled(dataDir, currentSource.file);
+                    if (!compatibleChoices(dataDir, currentEntry.file, currentSource.file))
                         throw new Exception("两段剧情的选项结构不同，请选择其他入口");
-                    writeState(dataDir, entry, source);
-                    Toast.makeText(activity, "替换已保存；下次打开入口时生效", Toast.LENGTH_LONG).show();
-                } catch (Exception error) { showError(activity, error); }
-            }).setNegativeButton("取消", null).show();
+                    writeState(dataDir, currentEntry, currentSource);
+                    return null;
+                }, ignored -> Toast.makeText(activity, "替换已保存；下次打开入口时生效", Toast.LENGTH_LONG).show()))
+            .setNegativeButton("取消", null).show();
     }
 
     private List<StoryItem> loadAvailable(Activity context, File dataDir) throws Exception {
-        byte[] bytes = HookEntry.readBuiltInAsset(context, CATALOG);
-        if (bytes.length > CATALOG_LIMIT) throw new Exception("剧情目录过大");
-        JSONObject catalog = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
-        if (catalog.getInt("schema_version") != 1) throw new Exception("剧情目录版本无效");
-        JSONArray rows = catalog.getJSONArray("stories");
+        if (TextHotUpdater.busy()) throw new Exception("文本正在更新，请完成后重新打开剧情替换");
+        JSONArray rows = StoryCatalog.load(dataDir, CATALOG,
+            name -> HookEntry.readBuiltInAsset(context, name));
         List<StoryItem> result = new ArrayList<>();
         for (int i = 0; i < rows.length(); i++) {
             StoryItem item = new StoryItem(rows.getJSONObject(i));
@@ -309,6 +360,10 @@ final class StorySwap {
     private boolean contains(List<StoryItem> stories, String file) {
         for (StoryItem story : stories) if (story.file.equals(file)) return true;
         return false;
+    }
+    private StoryItem itemFor(List<StoryItem> stories, String file) throws Exception {
+        for (StoryItem item : stories) if (item.file.equals(file)) return item;
+        throw new Exception("剧情目录已更新，请重新选择剧情");
     }
     private String labelFor(List<StoryItem> stories, String file) {
         for (StoryItem story : stories) if (story.file.equals(file)) return story.label();

@@ -8,6 +8,7 @@ import re
 import subprocess
 
 from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, find_release, is_text, timestamp
+from story_catalog_payloads import release_catalog_assets
 
 
 def sha256(path):
@@ -65,12 +66,13 @@ def publish_latest(repository, output, text_tag, dry_run=False, *, client=None, 
             or manifest.get('archive', {}).get('url') != expected_url
             or manifest['archive'].get('sha256') != sha256(archive)):
         raise ValueError('Latest manifest must reference the verified historical text archive')
+    catalogs = release_catalog_assets(output, repository, text_tag)
     if dry_run:
         return {'tag': 'latest', 'text_tag': text_tag, 'published': False}
     client = client or GitHub(repository)
     uploader = uploader or upload
     source = client.request('GET', f'releases/tags/{text_tag}')
-    if not is_text(source) or not verified_assets(source, [archive, manifest_path]):
+    if not is_text(source) or not verified_assets(source, [archive, manifest_path, *catalogs]):
         raise ValueError('Historical text release is not complete and verified; latest unchanged')
     alias = find_release(client, 'latest')
     if alias:

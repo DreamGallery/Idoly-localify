@@ -194,6 +194,8 @@ final class TextHotUpdater {
         Collections.sort(names);
         List<Item> items = new ArrayList<>();
         for (String name : names) {
+            if (StoryCatalog.accepts(name))
+                throw new IllegalArgumentException("剧情目录必须放在 story_catalogs 清单中");
             long max = maximumFor(name);
             JSONObject entry = files.getJSONObject(name);
             String hash = entry.getString("sha256").toLowerCase(Locale.ROOT);
@@ -202,10 +204,27 @@ final class TextHotUpdater {
             }
             items.add(new Item(name, archive == null ? httpsUrl(entry.getString("url")) : null, hash, max));
         }
+        // Keep the schema-2 ZIP unchanged for older plugins. Catalog sidecars
+        // share hashes, staging, rollback and the installed text version.
+        List<Item> archiveItems = new ArrayList<>(items);
+        if (manifest.has("story_catalogs")) {
+            JSONObject catalogs = manifest.getJSONObject("story_catalogs");
+            if (catalogs.length() != StoryCatalog.NAMES.length)
+                throw new IllegalArgumentException("更新清单必须同时包含三类剧情目录");
+            for (String name : StoryCatalog.NAMES) {
+                JSONObject entry = catalogs.getJSONObject(name);
+                String hash = entry.getString("sha256").toLowerCase(Locale.ROOT);
+                if (!hash.matches("[0-9a-f]{64}"))
+                    throw new IllegalArgumentException("剧情目录 SHA256 无效：" + name);
+                items.add(new Item(name, httpsUrl(entry.getString("url")), hash, StoryCatalog.LIMIT));
+            }
+        }
         List<Item> changed = new ArrayList<>();
         for (Item item : items) {
             File target = safeTarget(dataDir, item.name);
-            if (!target.isFile() || !sha256(target).equals(item.sha256)) changed.add(item);
+            if (!target.isFile() || target.length() > item.maxBytes || !sha256(target).equals(item.sha256)) changed.add(item);
+            else if (StoryCatalog.accepts(item.name))
+                StoryCatalog.parse(item.name, Files.readAllBytes(target.toPath()));
         }
         if (changed.isEmpty() && version.equals(readTextVersion(dataDir)))
             return new Result(true, "文本已是清单版本 " + version
@@ -217,23 +236,29 @@ final class TextHotUpdater {
             for (int index = 0; index < changed.size(); index++) {
                 Item item = changed.get(index);
                 item.staged = stage.resolve("new-" + index).toFile();
-                if (archive == null) total += download(item.url, item.staged, item.maxBytes, item.sha256);
+                if (archive == null || StoryCatalog.accepts(item.name))
+                    total += download(item.url, item.staged, item.maxBytes, item.sha256);
                 if (total > TOTAL_LIMIT) throw new IllegalArgumentException("更新总量超过 1 GiB");
             }
-            if (archive != null && !changed.isEmpty()) {
+            boolean archiveChanged = false;
+            for (Item item : changed) if (!StoryCatalog.accepts(item.name)) archiveChanged = true;
+            if (archive != null && archiveChanged) {
                 String archiveHash = archive.getString("sha256").toLowerCase(Locale.ROOT);
                 if (!archiveHash.matches("[0-9a-f]{64}")) {
                     throw new IllegalArgumentException("更新压缩包 SHA256 无效");
                 }
                 File zip = stage.resolve("download.zip").toFile();
-                download(httpsUrl(archive.getString("url")), zip, TOTAL_LIMIT, archiveHash);
+                total += download(httpsUrl(archive.getString("url")), zip, TOTAL_LIMIT, archiveHash);
+                if (total > TOTAL_LIMIT) throw new IllegalArgumentException("更新总量超过 1 GiB");
                 Map<String, UpdateArchive.Expected> expected = new LinkedHashMap<>();
-                for (Item item : items) expected.put(item.name,
+                for (Item item : archiveItems) expected.put(item.name,
                     new UpdateArchive.Expected(item.sha256, item.maxBytes, item.staged));
                 UpdateArchive.extract(zip, expected, TOTAL_LIMIT);
             }
             boolean masterChanged = false;
             for (Item item : changed) {
+                if (StoryCatalog.accepts(item.name))
+                    StoryCatalog.parse(item.name, Files.readAllBytes(item.staged.toPath()));
                 if (item.name.equals("web-notice.json")) {
                     noticeScripts = NoticeWebViewHook.prepare(item.staged);
                 }
@@ -296,7 +321,7 @@ final class TextHotUpdater {
                 if (dictionaryRestartPending)
                     return new Result(true, "已下载并校验文本 " + version
                         + "。字典配置发生变化，请完全关闭并重启游戏使更新生效。", manifestUrl, version);
-                return new Result(true, "已更新到 " + version + "。界面字典即时生效；剧情资源下次加载生效。"
+                return new Result(true, "已更新到 " + version + "。界面字典即时生效；重新打开剧情替换可读取最新目录，剧情资源下次加载生效。"
                     + (masterChanged ? "MasterDB 已更新，请重启游戏使其生效。" : ""), manifestUrl, version);
             } catch (Exception error) {
                 try { recover(dataDir); }
@@ -422,6 +447,7 @@ final class TextHotUpdater {
     }
 
     private static long maximumFor(String name) {
+        if (StoryCatalog.accepts(name)) return StoryCatalog.LIMIT;
         if (name.equals("dict.json")) return 64L * 1024 * 1024;
         if (name.equals("web-notice.json")) return 32L * 1024 * 1024;
         if (name.equals("master-blobs.bin")) return 256L * 1024 * 1024;

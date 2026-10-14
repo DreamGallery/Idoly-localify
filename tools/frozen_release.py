@@ -237,9 +237,11 @@ def receipt_commit(repository):
 
 
 def cache_assets(work, version, output, apk=None, notes=None):
+    from story_catalog_payloads import release_catalog_assets
     target = work / 'frozen-batches' / version
     target.mkdir(parents=True, exist_ok=True)
-    assets = [output / 'manifest.json', output / 'text-update.zip'] + ([apk] if apk else [])
+    assets = ([output / 'manifest.json', output / 'text-update.zip']
+              + release_catalog_assets(output) + ([apk] if apk else []))
     hashes = {}
     for asset in assets:
         destination = target / asset.name

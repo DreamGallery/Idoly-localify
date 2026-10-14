@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 from pipeline import Pipeline
 from font_policy import required_patch_mode
+from story_catalog_payloads import CATALOG_NAMES, CATALOG_LIMIT, validate_catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,6 +209,7 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
     output = validated_output(root, output)
     pipeline = Pipeline(root)
     sources = {}
+    catalog_sources = {}
     for name, (relative, limit) in ASSETS.items():
         if name == "web-notice.json" and not include_notice:
             continue
@@ -232,6 +234,10 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
             sources[key] = snapshot(story_dir / filename, MAX_STORY, key, require_utf8=True)
         if not names:
             raise ValueError("no verified story resources found")
+        for name in CATALOG_NAMES:
+            path = root / "app/src/main/assets/idoly-localify" / name
+            catalog_sources[name] = snapshot(path, CATALOG_LIMIT, name)
+            validate_catalog(name, path.read_bytes())
     if include_master_blobs:
         if master_tag is None:
             raise ValueError("--include-master-blobs requires --master-tag")
@@ -241,18 +247,19 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
         verify_patches(master_tag, orig, root / "translations/master/zh-Hans",
                        {path.stem for path in orig.glob("*.json")}, blob)
         sources["master-blobs.bin"] = snapshot(blob, 256 * 1024 * 1024, "master-blobs.bin")
-    if len(sources) > MAX_FILES:
+    all_sources = {**sources, **catalog_sources}
+    if len(all_sources) > MAX_FILES:
         raise ValueError("release exceeds the app file-count limit")
-    if sum(size for _, _, size in sources.values()) > MAX_TOTAL:
+    if sum(size for _, _, size in all_sources.values()) > MAX_TOTAL:
         raise ValueError("release exceeds the app total download limit")
     pipeline.run(verify=True)
     if include_stories and pipeline.names() != names:
         raise ValueError("story resource list changed during verification; retry")
-    for name, (path, digest, size) in sources.items():
+    for name, (path, digest, size) in all_sources.items():
         if path.stat().st_size != size or file_sha256(path) != digest:
             raise ValueError(f"{name} changed during verification; retry")
     if version is None:
-        joined = "\n".join(f"{name}:{sources[name][1]}" for name in sorted(sources))
+        joined = "\n".join(f"{name}:{all_sources[name][1]}" for name in sorted(all_sources))
         version = sha256(joined.encode("ascii"))[:16]
     validate_version(version)
     files = {}
@@ -269,6 +276,14 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
             raise ValueError("GitHub release version must be URL-safe")
         files = {name: {"sha256": digest} for name, (_, digest, _) in sources.items()}
         manifest = {"schema_version": 2, "version": version, "files": files}
+    if catalog_sources:
+        # Older plugins ignore this optional section and continue to consume
+        # the unchanged text ZIP. New plugins commit these files with the text.
+        manifest["story_catalogs"] = {
+            name: {"sha256": digest, "url": (
+                f"https://github.com/{github_repository}/releases/download/text-{version}/{name}"
+                if github_repository else f"{base_url}/objects/{digest}/{name}")}
+            for name, (_, digest, _) in catalog_sources.items()}
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(manifest_bytes) > MAX_MANIFEST:
         raise ValueError("manifest exceeds the app download limit")
@@ -276,7 +291,7 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
     objects_dir = output / "objects"
     if objects_dir.is_symlink():
         raise ValueError(f"refusing symlink: {objects_dir}")
-    for name, (source, digest, _) in sources.items():
+    for name, (source, digest, _) in all_sources.items():
         object_dir = objects_dir / digest
         if object_dir.is_symlink():
             raise ValueError(f"refusing symlink: {object_dir}")
@@ -292,7 +307,7 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
             raise ValueError(f"release object failed checksum: {destination}")
     if include_stories and pipeline.names() != names:
         raise ValueError("story resource list changed during packaging; retry")
-    for name, (path, digest, size) in sources.items():
+    for name, (path, digest, size) in all_sources.items():
         if path.stat().st_size != size or file_sha256(path) != digest:
             raise ValueError(f"{name} changed during packaging; retry")
     if github_repository is not None:
@@ -328,6 +343,11 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
         manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         if len(manifest_bytes) > MAX_MANIFEST:
             raise ValueError("manifest exceeds the app download limit")
+    if github_repository is not None:
+        for name, (source, digest, _) in catalog_sources.items():
+            atomic_copy(output / name, source)
+            if file_sha256(output / name) != digest:
+                raise ValueError(f"Story catalog changed while packaging: {name}")
     # Every object is now complete. Publish the small pointer file last.
     atomic_bytes(output / "manifest.json", manifest_bytes)
     if (output / "manifest.json").read_bytes() != manifest_bytes:

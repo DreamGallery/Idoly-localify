@@ -26,6 +26,8 @@ class BuildTextUpdateTests(unittest.TestCase):
         self.notice = {"host": "stat.game-idolypride.jp", "pages": {}}
         self.write_asset("dict.json", self.dictionary)
         self.write_asset("web-notice.json", self.notice)
+        for name in release.CATALOG_NAMES:
+            self.write_asset(name, {"schema_version": 1, "stories": []})
 
     def write_asset(self, name, value):
         (self.asset_dir / name).write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")

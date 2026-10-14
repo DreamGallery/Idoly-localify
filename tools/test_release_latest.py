@@ -100,6 +100,28 @@ class LatestReleaseTests(unittest.TestCase):
                                  ('UPLOAD', 'manifest.json'), ('POST', 'git/refs'), ('PATCH', 'releases/2')])
         self.assertEqual(json.loads((self.output / 'manifest.json').read_text()), self.manifest)
 
+    def test_catalogs_must_be_verified_on_immutable_release_before_alias_moves(self):
+        from story_catalog_payloads import CATALOG_NAMES
+        catalogs = {}
+        for name in CATALOG_NAMES:
+            path = self.output / name
+            path.write_text(json.dumps({'schema_version': 1, 'stories': []}))
+            catalogs[name] = {'sha256': latest.sha256(path), 'url':
+                f'https://github.com/{self.client.repository}/releases/download/{self.tag}/{name}'}
+        self.manifest['story_catalogs'] = catalogs
+        (self.output / 'manifest.json').write_text(json.dumps(self.manifest))
+        self.client = FakeReleases(self.output, self.tag)
+        with self.assertRaisesRegex(ValueError, 'not complete'):
+            self.publish()
+        self.assertNotIn('latest', self.client.items)
+        self.client.items[self.tag]['assets'] += [self.client.asset(self.output / name) for name in CATALOG_NAMES]
+        self.publish()
+        self.assertEqual(self.client.uploaded, ['text-update.zip', 'manifest.json'])
+        self.manifest['story_catalogs']['card-stories.json']['url'] = 'https://example.org/other-version.json'
+        (self.output / 'manifest.json').write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(ValueError, 'same immutable'):
+            self.publish()
+
     def test_same_assets_skip_reupload_but_refresh_plugin_link(self):
         self.publish()
         self.client.items['v0.2.5'] = {

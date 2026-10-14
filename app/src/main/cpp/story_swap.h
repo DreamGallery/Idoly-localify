@@ -224,7 +224,7 @@ inline StorySwapPlaybackTitles storySwapPlaybackTitles(
     if (selection.entryEpisode && (result.entry.episode != "第" + std::to_string(selection.entryEpisode) + "话" ||
         result.source.episode != "第" + std::to_string(selection.sourceEpisode) + "话")) return {};
     result.entryCatalogTitle = selection.entryTitle;
-    // The embedded catalog predates downloaded human revisions. Preserve its
+    // The catalog may predate downloaded human revisions. Preserve its
     // line breaks only when its wording still equals the loaded script title.
     result.sourceCatalogTitle = storySwapTitleKey(selection.sourceTitle) == storySwapTitleKey(result.source.title)
         ? selection.sourceTitle : result.source.title;

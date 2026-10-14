@@ -11,6 +11,7 @@ import re
 import subprocess
 import tempfile
 from urllib.parse import quote
+from story_catalog_payloads import CATALOG_NAMES
 
 TEXT_TAG = re.compile(r'text-[0-9a-f]{16}')
 PLUGIN_TAG = re.compile(r'v\d+\.\d+\.\d+(?:[-.][A-Za-z0-9]+)*')
@@ -96,7 +97,8 @@ def dispatch(source, target, tag):
 def is_text(release):
     return (bool(TEXT_TAG.fullmatch(release.get('tag_name', '')))
             and not release.get('draft') and not release.get('prerelease')
-            and {a['name'] for a in release.get('assets', [])} == TEXT_ASSETS)
+            and {a['name'] for a in release.get('assets', [])} in
+                (TEXT_ASSETS, TEXT_ASSETS | set(CATALOG_NAMES)))
 
 
 def timestamp(release):

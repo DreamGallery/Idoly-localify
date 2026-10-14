@@ -38,7 +38,7 @@ https://github.com/DreamGallery/Idoly-localify-translations/releases/latest/down
 
 ### GitHub Release 更新包（插件 0.2.0 起）
 
-每天北京时间 23:00 的工作流在翻译仓库运行，也可手动启动。抓取新增原文、复用已有译文、完成模型初译、导入校对完成稿后，校验并打包；有未完成译文或校验失败时不发布。人工剧情标题按对应脚本关联到 MasterDB。工作流及服务器配置见[翻译仓库](https://github.com/DreamGallery/Idoly-localify-translations)。
+发布工作流在翻译仓库定时运行，也可手动启动。抓取新增原文、复用已有译文、完成模型初译、导入校对完成稿后，校验并打包；有未完成译文或校验失败时不发布。人工剧情标题按对应脚本关联到 MasterDB。时间安排及服务器配置见[翻译仓库](https://github.com/DreamGallery/Idoly-localify-translations)。
 
 每次文本发布包含 `manifest.json` 和 `text-update.zip`。ZIP 条目名与清单 `files` 键完全一致；压缩包及每份文件均校验 SHA-256。下例仅展示结构，实际清单由工具生成：
 
@@ -61,6 +61,10 @@ https://github.com/DreamGallery/Idoly-localify-translations/releases/latest/down
 
 所有条目通过检查后才事务替换有变化的本地文件；拒绝重复、多余、缺失条目、非法路径、超限及校验失败。未列入清单的本地文件保留。备份与恢复记录支持更新过程中进程退出后的恢复。
 
+包含剧情的发布还提供 `card-stories.json`、`event-stories.json`、`love-stories.json`。清单的可选 `story_catalogs` 对象以这三个文件名为键，每项包含绝对 HTTPS `url` 和 `sha256`，GitHub 地址固定到同一次文本发布。目录独立于 ZIP 下载，与文本一起校验、提交和回滚；三类目录必须齐全，每份最大 1 MiB。旧插件忽略这一可选字段，继续使用原文本包。
+
+剧情替换优先读取下载的目录，没有本地目录时使用插件内置目录。更新后重新打开替换列表即可看到已下载脚本对应的新卡牌和活动，无需重新打包插件。短版脚本不列入替换选择，普通活动仍排除不兼容的选项结构，特殊活动仍要求入口与播放脚本的选项数量一致。
+
 升级插件时会保留已下载或手动修改的字典。若新字典仅需改变启动时配置（例如诊断开关或字体模式），原生层完整校验后允许保存更新，并提示重启游戏；当前进程的字典和配置保持不变。格式或内容无效仍拒绝更新，原生模块尚未就绪则单独提示，不将这两种情况混为配置不兼容。
 
 `dict.json` 必需；公告、剧情和 MasterDB 补丁可选。MasterDB 更新后需要重启游戏，仍按完整原始记录字节匹配；游戏原文变化后旧补丁不会凭近似文本套用。
@@ -81,4 +85,4 @@ python3 tools/build_text_update.py --base-url https://example.org/idoly \
 
 ### 限制
 
-清单最大 4 MiB、最多 8192 文件；字典 64 MiB、公告词典 32 MiB、MasterDB 补丁 256 MiB、单个剧情 8 MiB。压缩包下载及总解压量各最多 1 GiB。只允许 `dict.json`、`web-notice.json`、`master-blobs.bin` 和 `resource/adv_*.txt`。
+清单最大 4 MiB、最多 8192 个文本文件；字典 64 MiB、公告词典 32 MiB、MasterDB 补丁 256 MiB、单个剧情 8 MiB。压缩包下载及总解压量各最多 1 GiB。`files` 仅允许 `dict.json`、`web-notice.json`、`master-blobs.bin` 和 `resource/adv_*.txt`；三类剧情目录仅由 `story_catalogs` 提供。
