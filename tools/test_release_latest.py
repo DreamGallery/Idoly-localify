@@ -31,6 +31,9 @@ class FakeReleases:
     def releases(self):
         return copy.deepcopy(list(self.items.values()))
 
+    def release_manifest(self, release):
+        return json.loads((self.output / 'manifest.json').read_text())
+
     def request(self, method, path, data=None, missing_ok=False):
         self.operations.append((method, path, copy.deepcopy(data)))
         if method == 'GET':
@@ -133,6 +136,60 @@ class LatestReleaseTests(unittest.TestCase):
         self.assertIn('/download/v0.2.5/idoly-localify-0.2.5.apk', self.client.items['latest']['body'])
         self.assertLess(self.client.items['latest']['body'].index('v0.2.5'),
                         self.client.items['latest']['body'].index('## 最新文本'))
+
+    def test_plugin_only_refresh_preserves_all_text_assets_and_refs(self):
+        self.publish()
+        before_assets = copy.deepcopy(self.client.items['latest']['assets'])
+        before_refs = copy.deepcopy(self.client.refs)
+        self.client.items['v0.4.3'] = {
+            'id': 3, 'tag_name': 'v0.4.3', 'published_at': '2026-10-21T15:00:00Z',
+            'assets': [{'name': 'idoly-localify-0.4.3.apk', 'size': 10, 'digest': 'sha256:' + 'b' * 64}]}
+        self.client.operations.clear()
+        latest.refresh_latest_notes(self.client.repository, client=self.client)
+        self.assertIn('/download/v0.4.3/idoly-localify-0.4.3.apk', self.client.items['latest']['body'])
+        self.assertIn(self.tag, self.client.items['latest']['body'])
+        self.assertEqual(self.client.items['latest']['assets'], before_assets)
+        self.assertEqual(self.client.refs, before_refs)
+        writes = [(m, p, set(d)) for m, p, d in self.client.operations if m != 'GET']
+        self.assertEqual(writes, [('PATCH', 'releases/2', {'body'})])
+        self.client.operations.clear()
+        latest.refresh_latest_notes(self.client.repository, client=self.client)
+        self.assertTrue(all(m == 'GET' for m, _, _ in self.client.operations))
+
+    def test_plugin_only_refresh_dry_run_has_no_network(self):
+        self.assertFalse(latest.refresh_latest_notes(
+            self.client.repository, True, client=self.client)['published'])
+        self.assertEqual(self.client.operations, [])
+
+    def test_plugin_only_refresh_requires_complete_text_entry(self):
+        with self.assertRaises(ValueError):
+            latest.refresh_latest_notes(self.client.repository, client=self.client)
+        self.publish()
+        for target, mutation in (('latest', {'immutable': True}),
+                                 ('latest', {'assets': [{'name': 'unrelated.zip'}]}),
+                                 (self.tag, {'draft': True})):
+            with self.subTest(target=target, mutation=mutation):
+                old = copy.deepcopy(self.client.items[target])
+                self.client.items[target].update(mutation)
+                self.client.operations.clear()
+                with self.assertRaises(ValueError):
+                    latest.refresh_latest_notes(self.client.repository, client=self.client)
+                self.assertTrue(all(m == 'GET' for m, _, _ in self.client.operations))
+                self.client.items[target] = old
+
+    def test_unchanged_text_branch_refreshes_after_publish_and_on_retry(self):
+        for apk in (self.output / 'idoly-localify-0.4.3.apk', None):
+            with self.subTest(apk=apk):
+                events = []
+                def published(*args, **kwargs):
+                    events.append('plugin')
+                    return {'tag': 'v0.4.3', 'published': True}
+                with patch.object(publisher, 'publish', side_effect=published), \
+                        patch.object(publisher, 'release_output'), \
+                        patch.object(latest, 'refresh_latest_notes',
+                                     side_effect=lambda *a: events.append('latest')):
+                    publisher.publish_plugin_update('owner/translations', '0.4.3', apk, 'Notes', False)
+                self.assertEqual(events, ['plugin', 'latest'] if apk else ['latest'])
 
     def test_replacing_assets_moves_only_latest_tag(self):
         self.publish()

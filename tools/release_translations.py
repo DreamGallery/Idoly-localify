@@ -140,6 +140,16 @@ def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dr
     release_output('text_tag', result, dry_run)
     return results
 
+
+def publish_plugin_update(repo, version, apk, apk_notes, dry_run):
+    from release_latest import refresh_latest_notes
+    if apk:
+        result = publish(repo, 'v' + version, [apk], False, dry_run, notes=apk_notes)
+        release_output('plugin_tag', result, dry_run)
+    # Also refresh on retry, when the APK already exists and was not rebuilt.
+    return refresh_latest_notes(repo, dry_run)
+
+
 def resume_frozen_publication(repo, repository, work):
     """A committed batch is resumed before fetching sources or translating anew."""
     from frozen_release import load_receipt, receipt_commit, cached_assets
@@ -562,10 +572,8 @@ def main():
     # race fails safely, with no force push and no implicit intake of newer work.
     finalized = finalize(base_revision)
     if isinstance(finalized, dict) and finalized.get('unchanged'):
-        if finalized['apk']:
-            result = publish(args.repository, 'v' + finalized['version'], [finalized['apk']],
-                             False, args.dry_run, notes=finalized['apk_notes'])
-            release_output('plugin_tag', result, args.dry_run)
+        publish_plugin_update(args.repository, finalized['version'], finalized['apk'],
+                              finalized['apk_notes'], args.dry_run)
         print(json.dumps({'schema_version': 1, 'unchanged': True, 'cutoff': cutoff, 'dry_run': args.dry_run}))
         return
     manifest, apk, apk_notes, data_commit, changed, output, version = finalized

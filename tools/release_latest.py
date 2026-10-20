@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, find_release, is_text, timestamp
+from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, alias_target, find_release, is_text, timestamp
 from story_catalog_payloads import release_catalog_assets
 
 
@@ -53,6 +53,26 @@ def notes(repository, text_tag, plugin):
 def upload(repository, path):
     subprocess.run(['gh', 'release', 'upload', 'latest', str(path), '--repo', repository,
                     '--clobber'], check=True)
+
+
+def refresh_latest_notes(repository, dry_run=False, *, client=None):
+    """Refresh plugin links while preserving the published text assets and tag."""
+    if dry_run:
+        return {'tag': 'latest', 'published': False}
+    client = client or GitHub(repository)
+    text_tag = alias_target(client)
+    if text_tag is None:
+        raise ValueError('A complete latest text entry is required before refreshing plugin links')
+    alias = find_release(client, 'latest')
+    if alias.get('immutable'):
+        raise ValueError('The latest release is immutable; plugin links cannot be refreshed')
+    source = client.request('GET', f'releases/tags/{text_tag}')
+    if not source or not is_text(source):
+        raise ValueError('Latest references an incomplete historical text release')
+    body = notes(repository, text_tag, latest_plugin(client.releases()))
+    if alias.get('body') != body:
+        client.request('PATCH', f'releases/{alias["id"]}', {'body': body})
+    return {'tag': 'latest', 'text_tag': text_tag, 'published': True}
 
 
 def publish_latest(repository, output, text_tag, dry_run=False, *, client=None, uploader=None):
