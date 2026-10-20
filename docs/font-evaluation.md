@@ -6,7 +6,7 @@
 
 若恋对白、姓名及原 `FOT-UDMarugo_SmallPr6-B` 控件采用 **Resource Han Rounded SC Bold（字重 700，版本 1.910）**，使用独立字体包与原控件的纵向度量。若恋按钮图片也使用同一份 Bold 字体；来源由 `config/love-font-source.json` 和 `config/ui-label-images.json` 的 SHA-256 固定。
 
-Resource Han Rounded 的静态字库以 gzip 保存在 `font-sources/`，沿用 SIL Open Font License，许可证随模块提供。该静态版本从官方 1.910 可变字体固定 `wght=700`、`ROND=100`，移除不兼容的 GPOS 表，再转换为 CFF1；字符映射与字形轮廓保持一致。
+Resource Han Rounded 在构建准备阶段下载官方 1.910 可变字体，固定 `wght=700`、`ROND=100`，移除不兼容的 GPOS 表，再转换为 CFF1；字符映射与字形轮廓保持一致。下载与生成结果按 SHA-256 校验并缓存，字体文件不提交仓库。字体沿用 SIL Open Font License，许可证随模块提供。
 
 默认模式为 `replace-ui`，字体由模块 AssetBundle 提供；兼容保留原字体资源的旧 `add-font` 游戏载荷：
 

@@ -18,11 +18,10 @@
 | `app/` | Android 模块、原生钩子与运行时界面 |
 | `config/` | 字体、控件与图片处理规则 |
 | `image-patches/` | 已审核的图片编辑区域与来源说明 |
-| `font-sources/` | 可再分发的圆体压缩源文件，构建时校验并解压 |
 | `tools/` | 文本编译、检查、打包及部署工具 |
 | `docs/` | 构建、文本维护与功能说明 |
 
-译文和校对数据维护在 [Idoly-localify-translations](https://github.com/DreamGallery/Idoly-localify-translations)。运行时图片保存在 `app/src/main/assets/idoly-localify/images/`，随插件发布；本机的 `translations/`、下载缓存、生成字典、字体 bundle 及测试 APK 不随代码仓库提交。字体许可证位于 `app/src/main/assets/licenses/`。
+译文和校对数据维护在 [Idoly-localify-translations](https://github.com/DreamGallery/Idoly-localify-translations)。运行时图片保存在 `app/src/main/assets/idoly-localify/images/`，随插件发布；本机的 `translations/`、下载缓存、生成字典、字体文件及测试 APK 不随代码仓库提交。两种字体均在构建准备阶段按配置下载官方固定版本、校验并缓存；许可证位于 `app/src/main/assets/licenses/`。
 
 配套工具独立维护：[HoshimiToolkit](https://github.com/DreamGallery/HoshimiToolkit) 用于资源获取与脚本转换，[Hoshimi_Teleprompter](https://github.com/DreamGallery/Hoshimi_Teleprompter) 用于模型翻译。路径可配置，见[文本流程](docs/text-pipeline.md)。
 

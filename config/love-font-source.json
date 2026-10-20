@@ -2,15 +2,25 @@
   "family": "Resource Han Rounded SC VF",
   "style": "Bold",
   "weight": 700,
+  "version": "1.910",
   "sha256": "9766fe62a37bc6366a7583fd3fdc99923afc745ce1e268ae79ef49a4d273b07d",
   "bundle": {
     "name": "love-rounded.bundle",
     "font_name": "Localify-LoveRoundedSC"
   },
   "source": {
-    "path": "font-sources/ResourceHanRoundedSC-Bold.otf.gz",
-    "format": "gzip",
-    "sha256": "d4014a9adb8556171fda87e9f3b4988367e714007d96822141f4efac7c8fecd2",
-    "upstream": "https://github.com/CyanoHao/Resource-Han-Rounded/releases/tag/v1.910"
+    "url": "https://github.com/CyanoHao/Resource-Han-Rounded/releases/download/v1.910/RHR-CFF2-OTF-1.910.7z",
+    "sha256": "8075bfdc44d8853ffe3314db3faee86b5119942696bb7b0290528123070e0924",
+    "archive": {
+      "format": "7z",
+      "member": "ResourceHanRoundedSC-VF.otf",
+      "sha256": "98db58f78ae81878a6f7fbb233db0ec86ce3f8727838b8cb7d839e57cb23bd78"
+    }
+  },
+  "instance": {
+    "axes": { "wght": 700, "ROND": 100 },
+    "drop_tables": ["GPOS"],
+    "update_names": true,
+    "head_modified": 3874565103
   }
 }

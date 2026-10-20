@@ -426,7 +426,7 @@ def main():
         if not Path(signing['IDOLY_KEYSTORE_FILE']).is_file(): raise ValueError('Signing keystore does not exist')
     for name in ('gh', 'git', 'java'):
         if not shutil.which(name): raise ValueError(f'Required runner program missing: {name}')
-    run([args.python, '-c', 'import UnityPy, fontTools, requests, Crypto, google.protobuf'])
+    run([args.python, '-c', 'import UnityPy, fontTools, py7zr, requests, Crypto, google.protobuf'])
     run([args.api_python, '-c', 'import grpc, google.protobuf'])
     if args.preflight_only:
         print(json.dumps({'preflight': 'passed', 'publishing': False}))

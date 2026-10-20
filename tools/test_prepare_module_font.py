@@ -1,6 +1,5 @@
 """Pinned font downloads and failed preparation must not replace good assets."""
 from io import BytesIO
-import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -8,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import py7zr
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
@@ -68,40 +68,84 @@ class ModuleFontTests(unittest.TestCase):
             self.assertEqual(fonts.resolve_font(spec, self.root, local), self.data)
             get.assert_not_called()
 
-    def packaged_spec(self, payload=None):
-        data = gzip.compress(self.data if payload is None else payload, mtime=0)
-        path = self.root / 'font-sources/selected.otf.gz'
-        path.parent.mkdir(exist_ok=True)
-        path.write_bytes(data)
-        return dict(self.spec, source={'path': 'font-sources/selected.otf.gz', 'format': 'gzip',
-                                      'sha256': hashlib.sha256(data).hexdigest()})
+    def archived_spec(self):
+        source = b'pinned variable font fixture'
+        stream = BytesIO()
+        with py7zr.SevenZipFile(stream, 'w') as archive:
+            archive.writestr(source, 'ResourceHanRoundedSC-VF.otf')
+            archive.writestr(b'unselected font', 'ResourceHanRoundedTC-VF.otf')
+        packed = stream.getvalue()
+        spec = self.variable_spec(source)
+        spec['source'].update({
+            'url': 'https://github.com/CyanoHao/Resource-Han-Rounded/releases/download/'
+                   'v1.910/RHR-CFF2-OTF-1.910.7z',
+            'archive': {'format': '7z', 'member': 'ResourceHanRoundedSC-VF.otf',
+                        'sha256': hashlib.sha256(packed).hexdigest()},
+        })
+        return spec, source, packed
 
-    def test_packaged_font_is_verified_and_prepared_without_network(self):
-        spec = self.packaged_spec()
-        with patch.object(fonts, 'ROOT', self.root), patch.object(fonts.urllib.request, 'urlopen') as get:
-            self.assertEqual(fonts.resolve_font(spec, self.root / 'cache'), self.data)
-            self.assertEqual(fonts.resolve_font(spec, self.root / 'cache'), self.data)
+    def test_archive_selects_sc_font_and_reuses_verified_cache(self):
+        spec, source, packed = self.archived_spec()
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(packed)) as get, \
+                patch('instantiate_font.instantiate_font', return_value=self.data) as instantiate:
+            self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
+            get.assert_called_once()
+            instantiate.assert_called_once_with(source, spec)
+        raw_cache = self.root / (spec['source']['sha256'] + '.otf')
+        final_cache = self.root / (spec['sha256'] + '.otf')
+        self.assertEqual(raw_cache.read_bytes(), source)
+        for discard in ((final_cache,), (final_cache, raw_cache)):
+            for path in discard:
+                path.unlink()
+            with patch.object(fonts.urllib.request, 'urlopen') as get, \
+                    patch('instantiate_font.instantiate_font', return_value=self.data):
+                self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
+                get.assert_not_called()
+        self.assertEqual(set(path.suffix for path in self.root.iterdir()), {'.otf', '.7z'})
+
+    def test_bad_archive_hash_is_rejected_before_extraction(self):
+        spec, _, _ = self.archived_spec()
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(b'corrupt archive')), \
+                patch.object(fonts, 'unpack_font') as unpack:
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                fonts.resolve_font(spec, self.root)
+            unpack.assert_not_called()
+        self.assertFalse(any(self.root.iterdir()))
+
+    def test_bad_extracted_source_is_rejected_before_instantiation(self):
+        spec, _, packed = self.archived_spec()
+        spec['source']['sha256'] = '0' * 64
+        with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(packed)), \
+                patch('instantiate_font.instantiate_font') as instantiate:
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                fonts.resolve_font(spec, self.root)
+            instantiate.assert_not_called()
+        self.assertFalse((self.root / (spec['sha256'] + '.otf')).exists())
+
+    def test_corrupt_archive_cache_is_rejected_without_network(self):
+        spec, _, _ = self.archived_spec()
+        (self.root / (spec['source']['archive']['sha256'] + '.7z')).write_bytes(b'bad cache')
+        with patch.object(fonts.urllib.request, 'urlopen') as get:
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                fonts.resolve_font(spec, self.root)
             get.assert_not_called()
 
-    def test_packaged_source_and_decompressed_font_both_require_pinned_hashes(self):
-        spec = self.packaged_spec()
-        with patch.object(fonts, 'ROOT', self.root):
-            (self.root / spec['source']['path']).write_bytes(b'corrupt archive')
-            with self.assertRaisesRegex(ValueError, 'source SHA-256'):
-                fonts.resolve_font(spec, self.root / 'cache')
-            with self.assertRaisesRegex(ValueError, 'font SHA-256'):
-                fonts.resolve_font(self.packaged_spec(b'wrong font'), self.root / 'cache')
-        self.assertFalse((self.root / 'cache' / (spec['sha256'] + '.otf')).exists())
-
-    def test_packaged_source_cannot_escape_project_or_decompress_without_limit(self):
-        spec = self.packaged_spec(b'A' * 4096)
-        with patch.object(fonts, 'ROOT', self.root), patch.object(fonts, 'MAX_FONT_BYTES', 1024):
+    def test_archive_member_is_explicit_and_bounded(self):
+        spec, _, packed = self.archived_spec()
+        archive = spec['source']['archive']
+        for member in ('../outside.otf', '/outside.otf', r'..\outside.otf', 'missing.otf'):
+            with self.subTest(member=member), self.assertRaisesRegex(ValueError, 'member'):
+                fonts.unpack_font(packed, dict(archive, member=member))
+        with patch.object(fonts, 'MAX_SOURCE_BYTES', 8):
             with self.assertRaisesRegex(ValueError, 'exceeds size limit'):
-                fonts.resolve_font(spec, self.root / 'cache')
-            for path in ('../outside.otf.gz', '/outside.otf.gz'):
-                spec['source']['path'] = path
-                with self.assertRaisesRegex(ValueError, 'Invalid packaged'):
-                    fonts.resolve_font(spec, self.root / 'cache')
+                fonts.unpack_font(packed, archive)
+
+    def test_unknown_download_host_is_rejected(self):
+        spec = dict(self.spec, url='https://example.com/font.otf')
+        with patch.object(fonts.urllib.request, 'urlopen') as get:
+            with self.assertRaisesRegex(ValueError, 'official'):
+                fonts.resolve_font(spec, self.root)
+            get.assert_not_called()
 
     def variable_spec(self, source):
         return dict(self.spec, source={
@@ -112,7 +156,7 @@ class ModuleFontTests(unittest.TestCase):
         source = b'pinned variable font fixture'
         spec = self.variable_spec(source)
         with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(source)) as get, \
-                patch('instantiate_noto.instantiate_font', return_value=self.data) as instantiate:
+                patch('instantiate_font.instantiate_font', return_value=self.data) as instantiate:
             self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
             self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
             get.assert_called_once()
@@ -120,14 +164,14 @@ class ModuleFontTests(unittest.TestCase):
         self.assertEqual((self.root / (spec['source']['sha256'] + '.otf')).read_bytes(), source)
         (self.root / (spec['sha256'] + '.otf')).unlink()
         with patch.object(fonts.urllib.request, 'urlopen') as get, \
-                patch('instantiate_noto.instantiate_font', return_value=self.data):
+                patch('instantiate_font.instantiate_font', return_value=self.data):
             self.assertEqual(fonts.resolve_font(spec, self.root), self.data)
             get.assert_not_called()
 
     def test_bad_variable_download_is_rejected_before_instantiation(self):
         spec = self.variable_spec(b'pinned variable font fixture')
         with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(b'wrong')), \
-                patch('instantiate_noto.instantiate_font') as instantiate:
+                patch('instantiate_font.instantiate_font') as instantiate:
             with self.assertRaisesRegex(ValueError, 'source SHA-256'):
                 fonts.resolve_font(spec, self.root)
             instantiate.assert_not_called()
@@ -137,7 +181,7 @@ class ModuleFontTests(unittest.TestCase):
         source = b'pinned variable font fixture'
         spec = self.variable_spec(source)
         with patch.object(fonts.urllib.request, 'urlopen', return_value=BytesIO(source)), \
-                patch('instantiate_noto.instantiate_font', return_value=b'wrong derived font'):
+                patch('instantiate_font.instantiate_font', return_value=b'wrong derived font'):
             with self.assertRaisesRegex(ValueError, 'SHA-256'):
                 fonts.resolve_font(spec, self.root)
         self.assertFalse((self.root / (spec['sha256'] + '.otf')).exists())

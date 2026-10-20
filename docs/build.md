@@ -23,7 +23,7 @@ python3 tools/build_test_apks.py --preflight-only \
 从 [Noto 官方固定版本](https://github.com/notofonts/noto-cjk/blob/Sans2.004/Sans/Variable/OTF/NotoSansCJKsc-VF.otf) 下载 `NotoSansCJKsc-VF.otf`，保存到 `.analysis/fonts/`，再生成静态 SemiBold：
 
 ```sh
-python3 tools/instantiate_noto.py \
+python3 tools/instantiate_font.py \
   .analysis/fonts/NotoSansCJKsc-VF.otf \
   .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf
 ```
@@ -54,7 +54,7 @@ python3 tools/prepare_module_font.py \
 
 此命令按 `config/font-source.json` 下载并校验官方可变字体，生成和缓存静态 SemiBold；离线可加 `--font .analysis/fonts/LocalifyNotoSansCJKsc-SemiBold.otf`。源文件与静态结果均检查 SHA-256。正式发布脚本同样将运行器旧 bundle 作为只读结构模板，重新装入当前默认字体，避免沿用旧字库。通用字体 Unity 对象名为 `Localify-DefaultCJK`；安装文件名 `resource-han-rounded.bundle` 保持稳定。
 
-若恋圆体与按钮统一使用 Resource Han Rounded SC Bold 700。构建工具从 `font-sources/` 解压固定字体，校验压缩源和字体本体的 SHA-256，并缓存结果；无需额外联网下载。生成独立圆体包：
+若恋圆体与按钮统一使用 Resource Han Rounded SC Bold 700。`config/love-font-source.json` 固定 [Resource Han Rounded 官方 1.910 发布包](https://github.com/CyanoHao/Resource-Han-Rounded/releases/tag/v1.910)，构建工具下载 7z 包，只提取完整 SC 可变字体，再生成静态 Bold。压缩包、源字体和静态结果分别校验 SHA-256；下载与生成结果缓存在 `.analysis/fonts/`，也可用 `--cache` 指定持久目录。生成独立圆体包：
 
 ```sh
 python3 tools/prepare_module_font.py \
@@ -63,7 +63,9 @@ python3 tools/prepare_module_font.py \
   --config config/love-font-source.json
 ```
 
-正式发布流程会准备上述两份字体包。将 `.analysis/font-bundle-template` 替换为实际模板文件。工具检查字体字节、对象及引用完整性。生成的 bundle 已加入 Git 忽略；本地构建前须自行准备，Gradle 不联网获取字体。LSPosed 用户完成模块构建安装后，启用作用域并启动一次游戏即可安装字体。
+缓存完整后可离线构建；也可用 `--font` 提供与配置摘要一致的静态字体。字体源文件和生成的 bundle 均不提交仓库，许可证随模块提供。
+
+正式发布流程会准备上述两份字体包。将 `.analysis/font-bundle-template` 替换为实际模板文件。工具检查字体字节、对象及引用完整性；本地构建前须先执行准备步骤，Gradle 不联网获取字体。LSPosed 用户完成模块构建安装后，启用作用域并启动一次游戏即可安装字体。
 
 ## 模块图片
 

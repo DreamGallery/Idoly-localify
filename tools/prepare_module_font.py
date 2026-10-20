@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Prepare the pinned default font using a verified standalone bundle template.
+"""Prepare a pinned module font using a verified standalone bundle template.
 
-This also upgrades an old runner's RHR bundle without a game APK. The template
-is read-only; all non-font objects and Unity references stay unchanged.
+The template is read-only; all non-font objects and Unity references stay unchanged.
 """
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FONT_BYTES = 64 * 1024 * 1024
+MAX_SOURCE_BYTES = 192 * 1024 * 1024
 
 
 def verify_font(data, spec):
@@ -48,6 +48,53 @@ def atomic_write(path, data):
         temporary.unlink(missing_ok=True)
 
 
+def unpack_font(data, archive):
+    """Extract only the selected font into memory, never archive filesystem paths."""
+    import py7zr
+    from py7zr.io import BytesIOFactory
+
+    member = archive.get('member', '')
+    if (archive.get('format') != '7z' or not member.endswith('.otf')
+            or '/' in member or '\\' in member or member.startswith('.')):
+        raise ValueError('Invalid font archive member or format')
+    with py7zr.SevenZipFile(BytesIO(data)) as packed:
+        matches = [entry for entry in packed.list() if entry.filename == member]
+        if len(matches) != 1 or matches[0].is_directory:
+            raise ValueError('Expected exactly one font archive member')
+        if not 0 < matches[0].uncompressed <= MAX_SOURCE_BYTES:
+            raise ValueError('Font archive member exceeds size limit')
+        factory = BytesIOFactory(limit=MAX_SOURCE_BYTES)
+        packed.extract(targets=[member], factory=factory)
+        result = factory.get(member).read()
+        if len(result) != matches[0].uncompressed or len(result) > MAX_SOURCE_BYTES:
+            raise ValueError('Font archive extraction size mismatch')
+        return result
+
+
+def download_source(source, cache):
+    url = source.get('url', '')
+    if not (url.startswith('https://raw.githubusercontent.com/notofonts/noto-cjk/')
+            or re.fullmatch(r'https://github\.com/CyanoHao/Resource-Han-Rounded/releases/download/'
+                            r'v[0-9.]+/RHR-CFF2-OTF-[0-9.]+\.7z', url)):
+        raise ValueError('Expected an official Noto or Resource Han Rounded HTTPS source')
+    archive = source.get('archive')
+    expected = archive['sha256'] if archive else source['sha256']
+    packed_cache = cache / (expected + '.7z') if archive else None
+    if packed_cache and packed_cache.is_file():
+        data = packed_cache.read_bytes()
+    else:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            data = response.read(MAX_FONT_BYTES + 1)
+    if len(data) > MAX_FONT_BYTES:
+        raise ValueError('Default font download exceeds size limit')
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError('Font source SHA-256 mismatch')
+    if archive:
+        atomic_write(packed_cache, data)
+        data = unpack_font(data, archive)
+    return data
+
+
 def resolve_font(spec, cache, font_path=None):
     if font_path is not None:
         data = font_path.read_bytes()
@@ -59,38 +106,19 @@ def resolve_font(spec, cache, font_path=None):
         verify_font(data, spec)
         return data
     source = spec.get('source', spec)
-    if 'path' in source:
-        relative = Path(source['path'])
-        if (relative.is_absolute() or '..' in relative.parts or
-                not (ROOT / relative).resolve().is_relative_to(ROOT.resolve()) or
-                source.get('format') != 'gzip'):
-            raise ValueError('Invalid packaged font source')
-        packed = (ROOT / relative).read_bytes()
-        if len(packed) > MAX_FONT_BYTES or hashlib.sha256(packed).hexdigest() != source['sha256']:
-            raise ValueError('Packaged font source SHA-256 or size mismatch')
-        with gzip.GzipFile(fileobj=BytesIO(packed)) as stream:
-            data = stream.read(MAX_FONT_BYTES + 1)
-        if len(data) > MAX_FONT_BYTES:
-            raise ValueError('Packaged font exceeds size limit')
-        verify_font(data, spec)
-        atomic_write(cached, data)
-        return data
     if not source.get('url'):
         raise ValueError('This font requires a local file; provide --font with the pinned font')
     source_cache = cache / (source['sha256'] + '.otf')
-    if 'instance' in spec and source_cache.is_file():
+    if source_cache.is_file():
         data = source_cache.read_bytes()
     else:
-        if not source['url'].startswith('https://raw.githubusercontent.com/notofonts/noto-cjk/'):
-            raise ValueError('Expected an official Noto HTTPS source')
-        with urllib.request.urlopen(source['url'], timeout=120) as response:
-            data = response.read(MAX_FONT_BYTES + 1)
-    if len(data) > MAX_FONT_BYTES:
-        raise ValueError('Default font download exceeds size limit')
+        data = download_source(source, cache)
+    if len(data) > MAX_SOURCE_BYTES:
+        raise ValueError('Font source exceeds size limit')
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise ValueError('Font source SHA-256 mismatch')
     if 'instance' in spec:
-        from instantiate_noto import instantiate_font
+        from instantiate_font import instantiate_font
         atomic_write(source_cache, data)
         data = instantiate_font(data, spec)
     verify_font(data, spec)

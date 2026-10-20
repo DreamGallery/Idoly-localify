@@ -41,6 +41,7 @@ master-tag.pb
 *.keystore
 *.p12
 *.otf
+*.otf.gz
 *.ttf
 *.ttc
 app/src/main/assets/idoly-localify/resource-han-rounded.bundle
