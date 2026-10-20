@@ -16,6 +16,8 @@ from import_collaboration import read_csv, safe_files
 JSON_PATHS = ('master', 'notice', 'ui', 'legal', 'story-metadata', 'glossary')
 JSON_DIRS = ('master/orig', 'master/zh-Hans')
 JSON_FILES = ('master/overrides.json', 'master/retained-titles.json',
+              'master/record-keys.json',
+              'master/field-keys.json',
               'notice/source.json', 'notice/zh-Hans.json', 'notice/title-resolutions.json',
               'ui/source.json', 'ui/zh-Hans.json', 'ui/variants-source.json',
               'legal/source.json', 'legal/zh-Hans.json',

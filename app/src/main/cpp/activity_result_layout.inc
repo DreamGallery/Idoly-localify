@@ -1,5 +1,5 @@
 void alignActivityReceiveName(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
     if (utf8(name) != "Name" || activity_result_layout::receiveChild(textObjectPath(self)) !=
@@ -50,7 +50,7 @@ void alignActivityReceiveName(void* self) {
 }
 
 void alignActivityResultAile(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
     const auto labelName = utf8(name);
@@ -88,7 +88,7 @@ void alignActivityResultAile(void* self) {
 // skip child placement on the exact work-name text objects. Text vertices
 // already use the parent's coordinates and must not be laid out a second time.
 bool fitActivityTextWithoutChildLayout(void* self, int32_t axis) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
         !fieldGetValue || !classGetFieldFromName) return false;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
@@ -126,7 +126,7 @@ void hookActivityFitToChildLayout(void* self, int32_t axis, void* method) {
 // Normalize any submesh created before the scoped layout guard takes effect.
 // This is idempotent after self-layout stops moving the generated children.
 void synchronizeActivityNameSubmeshFrame(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
         !classGetFieldFromName || !fieldGetValue) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));

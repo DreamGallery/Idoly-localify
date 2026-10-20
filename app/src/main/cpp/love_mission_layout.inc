@@ -3,7 +3,7 @@
 // two characters: align the whole receive button to its sibling, including its
 // hit target. Keep the game's child fitting and vertical placement intact.
 void alignLoveMissionLabels(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox || !stringNew) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox || !stringNew) return;
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
     static const auto getTransform = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Component", "get_transform", 0);
     static const auto getParent = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "get_parent", 0);

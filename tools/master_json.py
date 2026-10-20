@@ -15,6 +15,8 @@ import tempfile
 import uuid
 
 from localize import validate, write_json
+from master_identity import index_records, rules_metadata, validate_keyed_table
+from master_field_paths import FieldPaths, field_rules_metadata, validate_field_table
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +110,22 @@ def read_table(path):
     return data
 
 
+def require_ready(master_dir: Path) -> None:
+    for name in (".master-export-in-progress.json", ".master-key-migration-in-progress.json"):
+        marker = master_dir / name
+        if marker.is_file():
+            raise ValueError(f"MasterDB operation was interrupted; resume it before reading: {marker}")
+    validate_record_schema(master_dir)
+
+
+def validate_record_schema(master_dir: Path) -> None:
+    for filename, expected in (("record-keys.json", rules_metadata()),
+                               ("field-keys.json", field_rules_metadata())):
+        path = master_dir / filename
+        if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != expected:
+            raise ValueError(f"{path}: unsupported MasterDB identity rules; update the tools first")
+
+
 def validate_field(source: str, target: str, label: str,
                    *, allow_line_reflow: bool = False) -> None:
     validate(source, target, label)
@@ -184,6 +202,9 @@ def export(input_dir: Path, orig_dir: Path, zh_dir: Path,
         raise ValueError("Seed dictionary and name glossary must map strings to strings")
     if (input_dir / ".master-fetch-in-progress.json").is_file():
         raise ValueError(f"{input_dir}: MasterDB fetch is incomplete; retry it before export")
+    if (orig_dir.parent / ".master-key-migration-in-progress.json").exists():
+        raise ValueError("MasterDB key migration is incomplete; resume it before export")
+    validate_record_schema(orig_dir.parent)
     fetch_state = input_dir / "master-fetch-state.json"
     state = None
     if fetch_state.is_file():
@@ -264,18 +285,30 @@ def export(input_dir: Path, orig_dir: Path, zh_dir: Path,
             else:
                 old_orig = read_table(orig_dir / path.name)
                 old_zh = read_table(zh_dir / path.name)
+            validate_keyed_table(path.stem, old_orig)
+            validate_keyed_table(path.stem, old_zh)
+            validate_field_table(path.stem, old_orig)
+            validate_field_table(path.stem, old_zh)
             source, translated = {}, {}
+            has_text = False
             for index, record in enumerate(records):
                 if not isinstance(record, dict):
                     raise ValueError(f"{path}: record {index} is not an object")
-                record_id = str(record.get("id", index))
                 selected = list(text_fields(record))
+                has_text = has_text or bool(selected)
                 unclassified = unclassified_fields(record, path.stem, selected)
                 if unclassified:
                     raise ValueError(f"{path}: record {index} has unclassified Japanese "
                                      f"string fields {unclassified[:8]}; review and update "
                                      "the MasterDB text extractor")
-                for field_path, original in selected:
+            # Resolve every row, including non-text rows, so a duplicate key or
+            # a missing rule cannot silently overwrite a reviewed translation.
+            identified = index_records(path.stem, records) if old_orig or has_text else {}
+            for record_id, record in identified.items():
+                selected = list(text_fields(record))
+                field_paths = FieldPaths(path.stem, record)
+                for positional_path, original in selected:
+                    field_path = field_paths.canonicalize(positional_path)
                     if original in names:
                         continue
                     if (field_path == "name" or field_path.endswith(".name")) \
@@ -392,14 +425,14 @@ def export(input_dir: Path, orig_dir: Path, zh_dir: Path,
             for name in sorted(retired):
                 (orig_dir / name).unlink(missing_ok=True)
                 (zh_dir / name).unlink(missing_ok=True)
+        write_json(orig_dir.parent / "record-keys.json", rules_metadata())
+        write_json(orig_dir.parent / "field-keys.json", field_rules_metadata())
         marker.unlink(missing_ok=True)
     return tables, fields
 
 
 def iter_fields(orig_dir: Path, zh_dir: Path):
-    marker = orig_dir.parent / ".master-export-in-progress.json"
-    if marker.is_file():
-        raise ValueError(f"MasterDB export was interrupted; rerun export before compiling: {marker}")
+    require_ready(orig_dir.parent)
     source_tables = {path.name for path in orig_dir.glob("*.json")}
     orphan_tables = sorted(path.name for path in zh_dir.glob("*.json")
                            if path.name not in source_tables)
@@ -411,6 +444,10 @@ def iter_fields(orig_dir: Path, zh_dir: Path):
             raise ValueError(f"Missing MasterDB translation table: {target_path}")
         orig = read_table(path)
         translated = read_table(target_path)
+        validate_keyed_table(path.stem, orig)
+        validate_keyed_table(path.stem, translated)
+        validate_field_table(path.stem, orig)
+        validate_field_table(path.stem, translated)
         for record_id, fields in translated.items():
             for field_path in fields:
                 if field_path not in orig.get(record_id, {}):
@@ -503,6 +540,8 @@ def keyed_index(orig_dir: Path, zh_dir: Path) -> dict:
     contextual = {source for source, targets in source_targets.items() if len(targets) > 1}
     return {
         "format": 1,
+        "record_keys": rules_metadata(),
+        "field_keys": field_rules_metadata(),
         "source_files": snapshots,
         "total_fields": total,
         "indexed_fields": indexed,

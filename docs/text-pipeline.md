@@ -57,7 +57,7 @@ python3 ../Hoshimi_Teleprompter/main.py master-plan \
 
 模型翻译时将 `master-plan` 改为 `master-translate`，并添加 `--glossary translations/glossary/names.json --term-glossary translations/glossary/terms.json`。
 
-原文与译文分别位于 `translations/master/orig/`、`translations/master/zh-Hans/`，按 `表名 → 记录 ID → 字段路径` 对应。原文未改变时，重新导出会保留已有修订。人名使用统一词典，音乐制作人员署名可以保留日文；译文与原文相同表示有意保留，空值表示待处理。
+原文与译文分别位于 `translations/master/orig/`、`translations/master/zh-Hans/`，按 `表名 → 记录键 → 字段路径` 对应。有 `id` 的表沿用 ID；其余已知表使用明确的业务字段组合，不以行号识别。嵌套数组有可靠业务字段时按字段定位，其余仍按位置和原文校验。规则分别保存在 `master/record-keys.json` 与 `master/field-keys.json`，旧行号及数组位置数据须先[迁移身份键](runtime-maintenance.md#旧数据迁移)。原文未改变时，重新导出会保留已有修订。人名使用统一词典，音乐制作人员署名可以保留日文；译文与原文相同表示有意保留，空值表示待处理。
 
 MasterDB 二次校对由 Teleprompter 生成建议，报告先在主项目本地生成：
 

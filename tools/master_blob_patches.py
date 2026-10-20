@@ -19,11 +19,12 @@ import sys
 import tempfile
 
 from localize import write_json
-from master_json import ORIG, ROOT, ZH, iter_fields
+from master_json import ORIG, ROOT, ZH, iter_fields, require_ready
+from master_identity import record_key, rules_metadata
+from master_field_paths import FieldPaths, field_rules_metadata
 
 
 MAGIC = b"IDOLYMB2"
-FIELD_PART = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)(?:\[(\d+)\])?\Z")
 TABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\Z")
 
 
@@ -87,33 +88,17 @@ def encrypted_pack(pack, version: str, cache_dir: Path, requests_module,
 
 def input_snapshot(master_tag: Path, orig_dir: Path, zh_dir: Path,
                    tables: set[str]) -> dict:
-    return {"master_tag": file_digest(master_tag),
+    require_ready(orig_dir.parent)
+    return {"master_tag": file_digest(master_tag), "record_keys": rules_metadata(),
+            "field_keys": field_rules_metadata(),
             "tables": {table: {"orig": file_digest(orig_dir / f"{table}.json"),
                                "zh-Hans": file_digest(zh_dir / f"{table}.json")}
                        for table in sorted(tables)}}
 
 
-def field_slot(message, path: str):
+def field_slot(message, path: str, table: str = ""):
     """Return (owner, field name or list index, current string)."""
-    current = message
-    for part in path.split("."):
-        match = FIELD_PART.fullmatch(part)
-        if not match or not hasattr(current, match.group(1)):
-            raise ValueError(f"Unsupported protobuf field path: {path}")
-        owner = current
-        current = getattr(owner, match.group(1))
-        index = match.group(2)
-        if index is not None:
-            index = int(index)
-            if index >= len(current):
-                raise ValueError(f"Protobuf list index out of range: {path}")
-            owner, current = current, current[index]
-            key = index
-        else:
-            key = match.group(1)
-    if not isinstance(current, str):
-        raise ValueError(f"Protobuf field is not text: {path}")
-    return owner, key, current
+    return FieldPaths(table, message).locate(path)[:3]
 
 
 def patch_blob(blob: bytes, message_type, record_id: str,
@@ -121,8 +106,9 @@ def patch_blob(blob: bytes, message_type, record_id: str,
     message = message_type.FromString(blob)
     if message.SerializeToString() != blob:
         raise ValueError(f"{label}: protobuf round-trip changed original bytes")
+    paths = FieldPaths(label, message)
     for field_path, (source, target) in fields.items():
-        owner, key, current = field_slot(message, field_path)
+        owner, key, current, _ = paths.locate(field_path)
         if current != source:
             raise ValueError(f"{label}:{record_id}:{field_path}: MasterDB source changed")
         if target and target != source:
@@ -158,13 +144,13 @@ def compile_patches(master_tag: Path, solis_dir: Path, orig_dir: Path,
     if not tables or any(not TABLE_NAME.fullmatch(name) for name in tables):
         raise ValueError("Select one or more valid MasterDB table names")
     output = output.resolve()
-    if (output == ROOT or ROOT not in output.parents or
-            ROOT / ".analysis" not in output.parents):
-        raise ValueError("Blob patches contain game resources; output must stay in .analysis")
+    private_roots = (ROOT / ".agent-local", ROOT / ".analysis")
+    if not any(directory in output.parents for directory in private_roots):
+        raise ValueError("Blob patches contain game resources; output must stay in .agent-local or .analysis")
     output.parent.mkdir(parents=True, exist_ok=True)
-    cache_dir = (cache_dir or ROOT / ".analysis/master-encrypted-cache").resolve()
-    if ROOT / ".analysis" not in cache_dir.parents:
-        raise ValueError("Encrypted MasterDB cache must stay in .analysis")
+    cache_dir = (cache_dir or ROOT / ".agent-local/master-encrypted-cache").resolve()
+    if not any(directory in cache_dir.parents for directory in private_roots):
+        raise ValueError("Encrypted MasterDB cache must stay in .agent-local or .analysis")
     sys.path.insert(0, str(solis_dir.resolve()))
     import pmaster_pb2
     import ptransaction_pb2
@@ -201,7 +187,7 @@ def compile_patches(master_tag: Path, solis_dir: Path, orig_dir: Path,
                     for (blob,) in connection.execute(f"select data from {table}"):
                         message_type = getattr(pmaster_pb2, table)
                         message = message_type.FromString(blob)
-                        record_id = str(getattr(message, "id", rows))
+                        record_id = record_key(table, message)
                         if record_id in seen:
                             raise ValueError(f"{table}: duplicate record ID {record_id}")
                         seen.add(record_id)

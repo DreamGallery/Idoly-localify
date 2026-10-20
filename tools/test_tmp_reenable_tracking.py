@@ -26,7 +26,10 @@ struct Label { Il2CppString text; };
 struct TrackedText {
     uint32_t weakHandle; std::string source, rendered, i18nKey; uint64_t generation;
 };
-std::recursive_mutex dictionaryMutex;
+struct Runtime {
+    std::recursive_mutex mutex;
+    std::recursive_mutex& frameMutex() { return mutex; }
+} translations;
 std::unordered_map<void*, TrackedText> trackedTexts;
 std::unordered_map<uint32_t, void*> handles;
 std::unordered_map<std::string, std::string> dictionary;

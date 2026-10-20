@@ -1,35 +1,20 @@
-// The test runner extracts the production loader into this include. Only its
-// Android-independent state is supplied here; parsing is never reimplemented.
-#include <atomic>
 #include <cassert>
-#include <cstdio>
 #include <fstream>
-#include <mutex>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include "json.hpp"
-#include "master_blob_matcher.h"
-#include "user_template_matcher.h"
-#include "numeric_text_template_matcher.h"
-#include "home_activity_name_matcher.h"
+#include "runtime/dictionary.h"
 
-#define LOGI(...) ((void)0)
-#define LOGE(...) ((void)0)
-std::unordered_map<std::string, std::string> textDict, legalTextDict, i18nDict;
-std::unordered_map<std::string, std::unordered_map<std::string, std::string>> i18nBySource;
-std::unordered_set<std::string> translatedValues;
-UserTemplateMatcher translatedUserTemplates;
-NumericTextTemplateMatcher numericTextTemplates;
-HomeActivityNameMatcher homeActivityNames;
-MasterBlobMatcher masterBlobPatches;
-std::recursive_mutex dictionaryMutex;
-std::atomic<uint64_t> translationGeneration{1};
-bool dumpEnabled = false, resourceReplace = true, assetReplace = true;
-bool captureOcto = false, probeMaster = false, fontEnabled = false;
-enum class FontMode { Fallback, ReplaceTranslated, ReplaceAll, PreserveNonCjk, ReplaceUi };
-FontMode fontMode = FontMode::Fallback;
-#include "dictionary_loader_under_test.inc"
+localify::DictionaryRuntime runtime;
+
+bool loadDictionary(const std::string& path, bool reload = false,
+                    bool* restartRequired = nullptr, bool deferApply = false) {
+    if (restartRequired) *restartRequired = false;
+    try {
+        const auto result = runtime.load(path, reload, deferApply, restartRequired != nullptr);
+        if (restartRequired) *restartRequired = result == localify::DictionaryUpdate::RestartRequired;
+        return true;
+    } catch (const std::exception&) { return false; }
+}
 
 void write(const std::string& path, const nlohmann::json& value) {
     std::ofstream stream(path);
@@ -43,8 +28,8 @@ int main(int argc, char** argv) {
         {"text", {{"source", "old"}}}, {"i18n", nlohmann::json::object()}};
     write(path, old);
     assert(loadDictionary(path));
-    assert(dumpEnabled && textDict.at("source") == "old");
-    const auto generation = translationGeneration.load();
+    assert(runtime.options().dumpEnabled && runtime.catalog().text.at("source") == "old");
+    const auto generation = runtime.generation();
 
     auto next = old;
     next["dump"] = false;
@@ -52,8 +37,8 @@ int main(int argc, char** argv) {
     write(path, next);
     bool restart = false;
     assert(loadDictionary(path, true, &restart) && restart);
-    assert(dumpEnabled && textDict.at("source") == "old");
-    assert(translationGeneration.load() == generation);
+    assert(runtime.options().dumpEnabled && runtime.catalog().text.at("source") == "old");
+    assert(runtime.generation() == generation);
     assert(!loadDictionary(path, true)); // Legacy immediate reload remains strict.
 
     auto invalid = next;
@@ -68,40 +53,99 @@ int main(int argc, char** argv) {
     invalid["font_mode"] = "unknown";
     write(path, invalid);
     assert(!loadDictionary(path, true, &restart) && !restart);
-    assert(dumpEnabled && textDict.at("source") == "old");
-    assert(translationGeneration.load() == generation);
+    assert(runtime.options().dumpEnabled && runtime.catalog().text.at("source") == "old");
+    assert(runtime.generation() == generation);
 
     // Applying the downloaded file on next startup changes configuration safely.
     write(path, next);
     assert(loadDictionary(path));
-    assert(!dumpEnabled && textDict.at("source") == "new");
+    assert(!runtime.options().dumpEnabled && runtime.catalog().text.at("source") == "new");
     next["text"]["source"] = "newer";
     write(path, next);
     assert(loadDictionary(path, true, &restart) && !restart);
-    assert(textDict.at("source") == "newer");
-    assert(translationGeneration.load() == generation + 1);
+    assert(runtime.catalog().text.at("source") == "newer");
+    assert(runtime.generation() == generation + 1);
 
     // Subsequent updates while waiting for restart also leave live state intact,
     // even if their settings happen to match the running process again.
     next["text"]["source"] = "pending";
     write(path, next);
     assert(loadDictionary(path, true, &restart, true) && restart);
-    assert(textDict.at("source") == "newer");
-    assert(translationGeneration.load() == generation + 1);
+    assert(runtime.catalog().text.at("source") == "newer");
+    assert(runtime.generation() == generation + 1);
 
     // Missing/corrupt input must not be accepted or mutate the running dictionary.
     std::ofstream(path) << "{";
     assert(!loadDictionary(path, true, &restart));
     assert(!loadDictionary(path + ".missing", true, &restart));
-    assert(textDict.at("source") == "newer");
+    assert(runtime.catalog().text.at("source") == "newer");
+
+    // Exercise lookup priority and source guards through the real portable API.
+    nlohmann::json lookups = {
+        {"text", {{"同じ原文", "通用译文"}, {"ブルームピース", "开花碎片"},
+                  {"鈴村優", "铃村优"}, {"部分を含む文章", "完整句子"}}},
+        {"i18n", {{"context", "不应回退"}, {"generic", "通用键译文"}}},
+        {"i18n_by_source", {{"context", {{"同じ原文", "上下文译文"}, {"保留", "保留"}}}}},
+        {"legal_by_type", {{"1", {{"source", "同じ原文"}, {"translation", "法务译文"}}}}},
+        {"translated_values", {"已翻译的剧情"}}
+    };
+    write(path, lookups);
+    assert(loadDictionary(path));
+    assert(*runtime.catalog().resolveI18n("context", "同じ原文") == "上下文译文");
+    assert(*runtime.catalog().resolveI18n("context", "保留") == "保留");
+    assert(!runtime.catalog().resolveI18n("context", "changed source"));
+    assert(*runtime.catalog().resolveI18n("generic", "任意原文") == "通用键译文");
+    assert(!runtime.catalog().resolveI18n("unknown", "同じ原文"));
+    int hierarchyWalks = 0;
+    auto unrelated = [&] { ++hierarchyWalks; return std::string("Unrelated/Name"); };
+    assert(runtime.catalog().resolveText("同じ原文", unrelated).text == "法务译文");
+    assert(hierarchyWalks == 0);
+    assert(runtime.catalog().resolveText("12時間前").text == "12小时前");
+    assert(!runtime.catalog().resolveText("あ12時間前").matched);
+    assert(runtime.catalog().resolveText("#鈴村優\n#未知").text == "#铃村优\n#未知");
+    assert(!runtime.catalog().resolveText("未知ブルームピース").matched);
+    auto rendered = runtime.catalog().resolveText("已翻译的剧情");
+    assert(rendered.matched && rendered.retainOriginal && rendered.updateFont);
+    const std::string shopPath = "WindowSystem/WindowRoot/ShopWindow(Clone)/"
+        "NormalShopScreen(Clone)/ScreenCanvas/ScreenRoot/ScreenSplitArea/Fullscreen/Upper/Header/Name";
+    auto shop = [&] { ++hierarchyWalks; return shopPath; };
+    hierarchyWalks = 0;
+    assert(runtime.catalog().resolveText("ブルームピース×3,000", shop).text == "开花碎片×3,000");
+    assert(hierarchyWalks == 1);
+    assert(!runtime.catalog().resolveText("ブルームピース×3,000", unrelated).matched);
+    assert(!runtime.catalog().resolveText("ブルームピース×3,000").matched);
+    // An exact whole-string decision still wins outside the scoped matcher.
+    lookups["text"]["ブルームピース×3,000"] = "独立译文";
+    write(path, lookups);
+    assert(loadDictionary(path, true, &restart) && !restart);
+    assert(runtime.catalog().resolveText("ブルームピース×3,000", shop).text == "开花碎片×3,000");
+    assert(runtime.catalog().resolveText("ブルームピース×3,000", unrelated).text == "独立译文");
+
+    // Parse errors late in the file cannot publish any earlier parsed maps.
+    invalid = lookups;
+    invalid["text"]["同じ原文"] = "不能应用";
+    invalid["i18n_by_source"]["context"]["同じ原文"] = 123;
+    const auto beforeInvalid = runtime.generation();
+    write(path, invalid);
+    assert(!loadDictionary(path, true, &restart));
+    assert(runtime.catalog().text.at("同じ原文") == "通用译文");
+    assert(*runtime.catalog().resolveI18n("context", "同じ原文") == "上下文译文");
+    assert(runtime.generation() == beforeInvalid);
+
+    // Source-string fallback must stay suppressed after every successful reload.
+    assert(runtime.suppressMasterSources({"同じ原文"}) == 1);
+    write(path, lookups);
+    assert(loadDictionary(path, true, &restart) && !restart);
+    assert(runtime.catalog().text.count("同じ原文") == 0);
+    assert(*runtime.catalog().resolveI18n("context", "同じ原文") == "上下文译文");
 
     if (argc == 4) {
         // Optional real released dictionaries: old startup -> deferred update -> restart.
         assert(loadDictionary(argv[2]));
-        const auto oldSize = textDict.size();
-        const auto oldDump = dumpEnabled;
+        const auto oldSize = runtime.catalog().text.size();
+        const auto oldDump = runtime.options().dumpEnabled;
         assert(loadDictionary(argv[3], true, &restart) && restart);
-        assert(textDict.size() == oldSize && dumpEnabled == oldDump);
+        assert(runtime.catalog().text.size() == oldSize && runtime.options().dumpEnabled == oldDump);
         assert(loadDictionary(argv[3]));
         assert(loadDictionary(argv[3], true, &restart) && !restart);
     }

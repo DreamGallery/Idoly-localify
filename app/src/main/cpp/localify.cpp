@@ -24,14 +24,9 @@
 #include <vector>
 
 #include "json.hpp"
+#include "runtime/dictionary.h"
 #include "master_blob_matcher.h"
 #include "story_swap.h"
-#include "user_template_matcher.h"
-#include "numeric_text_template_matcher.h"
-#include "venus_achiever_name_matcher.h"
-#include "home_activity_name_matcher.h"
-#include "fan_event_ranking_matcher.h"
-#include "premium_gacha_labels.h"
 #include "gacha_pickup_layout.h"
 #include "guild_medal_font.h"
 #include "love_font_policy.h"
@@ -140,11 +135,8 @@ GcHandleFree gcHandleFree = nullptr;
 ObjectUnbox objectUnbox = nullptr;
 ArrayNew arrayNew = nullptr;
 
-std::unordered_map<std::string, std::string> textDict;
-std::unordered_map<std::string, std::string> legalTextDict;
-// Hooks can nest through TMP setters. Reload parses off-thread and takes this
-// lock only for publishing a fully validated replacement.
-std::recursive_mutex dictionaryMutex;
+localify::DictionaryRuntime translations;
+using localify::FontMode;
 struct ResolvedI18nValue {
     uint32_t weakHandle;
     std::string key;
@@ -160,29 +152,14 @@ struct TrackedText {
     uint64_t generation;
 };
 std::unordered_map<void*, TrackedText> trackedTexts;
-std::atomic<uint64_t> translationGeneration{1};
-std::unordered_map<std::string, std::string> i18nDict;
-std::unordered_map<std::string, std::unordered_map<std::string, std::string>> i18nBySource;
-std::unordered_set<std::string> translatedValues;
-UserTemplateMatcher translatedUserTemplates;
-NumericTextTemplateMatcher numericTextTemplates;
-HomeActivityNameMatcher homeActivityNames;
 std::unordered_set<std::string> dumped;
 std::mutex dumpMutex;
 std::string dumpPath;
 std::string resourceRoot;
 std::string assetRoot;
-bool dumpEnabled = false;
-bool resourceReplace = true;
-bool assetReplace = true;
-bool captureOcto = false;
-bool probeMaster = false;
 std::string octoSettingsPath;
 std::atomic<bool> octoCaptured{false};
 std::mutex octoCaptureMutex;
-bool fontEnabled = false;
-enum class FontMode { Fallback, ReplaceTranslated, ReplaceAll, PreserveNonCjk, ReplaceUi };
-FontMode fontMode = FontMode::Fallback;
 uint32_t fallbackFontAssetHandle = 0;
 uint32_t loadedFontHandle = 0;
 uint32_t loadedReplacementFontHandle = 0;
@@ -200,9 +177,9 @@ std::unordered_map<int32_t, OriginalLabelStyle> originalLabelStyles;
 struct OriginalLegacyFont { uint32_t weakHandle; uint32_t fontHandle; };
 std::unordered_map<void*, OriginalLegacyFont> originalLegacyFonts;
 bool usesIndependentFontRouting() {
-    return fontMode == FontMode::PreserveNonCjk || fontMode == FontMode::ReplaceUi;
+    return translations.options().fontMode == FontMode::PreserveNonCjk || translations.options().fontMode == FontMode::ReplaceUi;
 }
-bool replacesCjk() { return fontMode == FontMode::ReplaceAll || usesIndependentFontRouting(); }
+bool replacesCjk() { return translations.options().fontMode == FontMode::ReplaceAll || usesIndependentFontRouting(); }
 std::unordered_set<void*> updatedFontAssets;
 std::recursive_mutex fontMutex;
 struct OriginalTextFont {
@@ -422,13 +399,13 @@ std::string textObjectPath(void* object) {
 }
 
 void dump(const char* kind, const std::string& source, const std::string& key = {}, void* textObject = nullptr) {
-    std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
-    if (((!dumpEnabled || legacyDumpSuppressed.load()) && !captureAcceptingRecords.load()) || source.empty() || source.size() > 1024 * 1024 ||
-        translatedValues.find(source) != translatedValues.end()) return;
+    std::lock_guard<std::recursive_mutex> dictionaryLock(translations.frameMutex());
+    if (((!translations.options().dumpEnabled || legacyDumpSuppressed.load()) && !captureAcceptingRecords.load()) || source.empty() || source.size() > 1024 * 1024 ||
+        translations.catalog().translatedValues.find(source) != translations.catalog().translatedValues.end()) return;
     std::lock_guard<std::mutex> lock(dumpMutex);
     const std::string identity = std::string(kind) + "\n" + key + "\n" + source;
     if (captureWritesPaused) return;
-    const bool writeDump = dumpEnabled && !legacyDumpSuppressed.load() && dumped.count(identity) == 0;
+    const bool writeDump = translations.options().dumpEnabled && !legacyDumpSuppressed.load() && dumped.count(identity) == 0;
     const bool writeCapture = captureAcceptingRecords.load() && capturedThisSession.count(identity) == 0;
     // Most repeated setters have already been captured. Avoid hierarchy walks
     // and JSON serialization for records neither destination needs again.
@@ -533,48 +510,8 @@ void captureTextLayout(void* self) {
     }
 }
 
-std::string translateNameTags(const std::string& source) {
-    if (source.empty() || source[0] != '#') return {};
-    std::string result;
-    bool changed = false;
-    size_t start = 0;
-    while (start < source.size()) {
-        const size_t end = source.find('\n', start);
-        const size_t limit = end == std::string::npos ? source.size() : end;
-        if (source[start] != '#') return {};
-        const std::string name = source.substr(start + 1, limit - start - 1);
-        const auto found = textDict.find(name);
-        if (found != textDict.end() && !found->second.empty() && found->second != name) {
-            result += '#';
-            result += found->second;
-            changed = true;
-        } else {
-            result.append(source, start, limit - start);
-        }
-        if (end == std::string::npos) break;
-        result += '\n';
-        start = end + 1;
-    }
-    return changed ? result : std::string();
-}
-
-std::string translateElapsed(const std::string& source) {
-    struct Suffix { const char* original; const char* translated; };
-    for (const auto& suffix : {Suffix{"日前", "天前"}, Suffix{"時間前", "小时前"},
-                               Suffix{"分前", "分钟前"}}) {
-        const std::string original = suffix.original;
-        if (source.size() <= original.size() ||
-            source.compare(source.size() - original.size(), original.size(), original)) continue;
-        const std::string amount = source.substr(0, source.size() - original.size());
-        if (std::all_of(amount.begin(), amount.end(),
-                        [](unsigned char value) { return value >= '0' && value <= '9'; }))
-            return amount + suffix.translated;
-    }
-    return {};
-}
-
 // Playback metadata belongs to one successful resource delivery, not merely
-// to a saved alias. All accesses share dictionaryMutex with the UI hooks.
+// to a saved alias. All accesses share translations.frameMutex() with the UI hooks.
 StorySwapPlaybackTitles activeStorySwapTitles;
 StorySwapPlaybackAssets activeStorySwapAssets;
 std::atomic<uint64_t> storySwapPlaybackGeneration{1};
@@ -584,7 +521,7 @@ struct StorySwapLabel { uint32_t weak; uint64_t generation; std::string original
 std::unordered_map<void*, StorySwapLabel> storySwapLabels;
 
 uint64_t resetStorySwapPlayback() {
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     activeStorySwapTitles = {};
     activeStorySwapAssets = {};
     ++storySwapPlaybackGeneration;
@@ -621,7 +558,7 @@ bool bindStorySwapScreen(void* self) {
 #include "story_cast_runtime.inc"
 
 Il2CppString* applyStorySwapTitle(void* self, Il2CppString* text) {
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     if (!self || !text || !stringNew || !gcHandleGetTarget || !gcHandleFree || !gcHandleNewWeak) return text;
     auto found = storySwapLabels.find(self);
     std::string current = utf8(text);
@@ -646,7 +583,7 @@ Il2CppString* applyStorySwapTitle(void* self, Il2CppString* text) {
 }
 
 void refreshStorySwapTitle(void* self) {
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     if ((!activeStorySwapTitles.ready() && storySwapLabels.empty()) || !runtimeInvoke || !origTmpSetText) return;
     static const auto getText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_text", 0);
     static const auto setText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_text", 1);
@@ -664,7 +601,7 @@ void refreshStorySwapTitle(void* self) {
 }
 
 Il2CppString* translateText(void* textObject, Il2CppString* original) {
-    std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> dictionaryLock(translations.frameMutex());
     if (!original) return original;
     const std::string source = utf8(original);
     if (source.empty()) return original;
@@ -681,7 +618,7 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
     // This message-picker prompt is drawn by a compact masked button. Replacing
     // its font asset made the label disappear in the old replace-all build.
     // Keep that compatibility exception there; whole-label routing uses replacement.
-    const bool messagePickerPrompt = fontMode == FontMode::ReplaceAll &&
+    const bool messagePickerPrompt = translations.options().fontMode == FontMode::ReplaceAll &&
         (source == "选择消息" || source == "メッセージを選択");
     if (replacesCjk()) updateFont(textObject, messagePickerPrompt);
     if (replacesCjk() && textObject && runtimeInvoke && objectUnbox) {
@@ -817,106 +754,21 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
     // Typography/layout rules above apply to resolved I18n labels too. Only
     // the context-free translation below is bypassed.
     if (resolved) {
-        if (!replacesCjk() && translatedValues.count(source))
+        if (!replacesCjk() && translations.catalog().translatedValues.count(source))
             updateFont(textObject, messagePickerPrompt);
         return original;
     }
-    if (textObject && source == "を" && stringNew) {
-        const auto ticket = textDict.find("チケット");
-        const auto purchase = textDict.find("購入");
-        const bool localized = ticket != textDict.end() && !ticket->second.empty() &&
-            ticket->second != ticket->first && purchase != textDict.end() &&
-            !purchase->second.empty() && purchase->second != purchase->first;
-        if (premium_gacha_labels::hidePurchaseParticle(source, textObjectPath(textObject), localized))
-            return stringNew("");
-    }
-    const auto legal = legalTextDict.find(source);
-    if (legal != legalTextDict.end() && stringNew) {
-        updateFont(textObject, messagePickerPrompt);
-        return stringNew(legal->second.c_str());
-    }
-    if (textObject && VenusAchieverNameMatcher::mayMatch(source)) {
-        const auto pattern = i18nDict.find("venus.firstAchiever.name");
-        if (pattern != i18nDict.end()) {
-            const auto translated = VenusAchieverNameMatcher::translate(
-                source, textObjectPath(textObject), pattern->second);
-            if (!translated.empty() && stringNew) {
-                updateFont(textObject, messagePickerPrompt);
-                return stringNew(translated.c_str());
-            }
-        }
-    }
-    if (textObject && fan_event_ranking::mayMatch(source, textDict)) {
-        const auto pattern = i18nDict.find("fanEvent.ranking.sheet.description");
-        const auto group = i18nDict.find("common.group.prefix");
-        if (pattern != i18nDict.end() && group != i18nDict.end()) {
-            const auto translated = fan_event_ranking::translate(source, textObjectPath(textObject),
-                textDict, pattern->second, group->second);
-            if (!translated.empty() && stringNew)
-                return translated == source ? original : stringNew(translated.c_str());
-        }
-    }
-    // Reviewed home and in-work footer labels contain the activity-name parameter.
-    // Check the text first so ordinary labels never pay for a hierarchy walk.
-    if (textObject && homeActivityNames.mayMatch(source)) {
-        const auto path = textObjectPath(textObject);
-        const auto translated = homeActivityNames.translate(source, path);
-        if (!translated.empty() && stringNew) {
-            updateFont(textObject, messagePickerPrompt);
-            return stringNew(translated.c_str());
-        }
-        if (homeActivityNames.isRendered(source, path)) {
-            updateFont(textObject, messagePickerPrompt);
-            return original;
-        }
-    }
-    // Observed exchange-only concatenation. The complete body and stock label
-    // must both have reviewed exact translations; unknown tails stay original.
-    if (textObject && ShopExchangeDescriptionMatcher::mayMatch(source)) {
-        const auto translated = ShopExchangeDescriptionMatcher::translate(source, textObjectPath(textObject), textDict);
-        if (!translated.empty() && stringNew) {
-            updateFont(textObject, messagePickerPrompt);
-            return stringNew(translated.c_str());
-        }
-    }
-    if (textObject && ShopScopedQuantityNameMatcher::mayMatch(source)) {
-        const auto translated = ShopScopedQuantityNameMatcher::translate(source, textObjectPath(textObject), textDict);
-        if (!translated.empty() && stringNew) {
-            updateFont(textObject, messagePickerPrompt);
-            return stringNew(translated.c_str());
-        }
-    }
-    auto found = textDict.find(source);
-    if (found != textDict.end() && !found->second.empty() && stringNew) {
-        updateFont(textObject, messagePickerPrompt);
-        return stringNew(found->second.c_str());
-    }
-    const std::string numeric = numericTextTemplates.translate(source);
-    if (!numeric.empty() && stringNew) {
-        updateFont(textObject, messagePickerPrompt);
-        return stringNew(numeric.c_str());
-    }
-    const std::string elapsed = translateElapsed(source);
-    if (!elapsed.empty() && stringNew) {
-        updateFont(textObject, messagePickerPrompt);
-        return stringNew(elapsed.c_str());
-    }
-    const std::string nameTags = translateNameTags(source);
-    if (!nameTags.empty() && stringNew) {
-        updateFont(textObject, messagePickerPrompt);
-        return stringNew(nameTags.c_str());
-    }
-    const bool exactTranslated = translatedValues.find(source) != translatedValues.end() ||
-        numericTextTemplates.isRendered(source);
-    const bool playerTemplate = !exactTranslated && translatedUserTemplates.matches(source);
-    if (exactTranslated || playerTemplate) {
-        if (playerTemplate && fontEnabled && textObject) {
+    std::function<std::string()> objectPath;
+    if (textObject) objectPath = [&] { return textObjectPath(textObject); };
+    const auto decision = translations.catalog().resolveText(source, objectPath);
+    if (decision.matched && (decision.retainOriginal || stringNew)) {
+        if (decision.playerTemplate && translations.options().fontEnabled && textObject) {
             static std::atomic<int> reported{0};
             if (reported.fetch_add(1) < 4)
                 LOGI("Matched rendered player-name text for font replacement");
         }
-        updateFont(textObject, messagePickerPrompt);
-        return original;
+        if (decision.updateFont) updateFont(textObject, messagePickerPrompt);
+        return decision.retainOriginal ? original : stringNew(decision.text.c_str());
     }
     const auto trackedShop = trackedTexts.find(textObject);
     if (!resolved && trackedShop != trackedTexts.end() && source == trackedShop->second.rendered &&
@@ -980,7 +832,7 @@ void rememberTranslatedText(void* self, Il2CppString* input, Il2CppString* outpu
     if (textCaptureEnabled.load()) layoutCaptured.erase(self);
     if (!self || !input || !output || !gcHandleNewWeak || !gcHandleGetTarget || !gcHandleFree)
         return;
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     const auto resolved = resolvedI18nStrings.find(input);
     const bool keyed = resolved != resolvedI18nStrings.end() &&
         gcHandleGetTarget(resolved->second.weakHandle) == input;
@@ -1008,7 +860,7 @@ void rememberTranslatedText(void* self, Il2CppString* input, Il2CppString* outpu
     const uint32_t handle = gcHandleNewWeak(self, false);
     if (!handle) return;
     trackedTexts.emplace(self, TrackedText{handle, source, rendered,
-        keyed ? resolved->second.key : std::string(), keyed ? 0 : translationGeneration.load()});
+        keyed ? resolved->second.key : std::string(), keyed ? 0 : translations.generation()});
     if (trackedTexts.size() > 4096) {
         for (auto it = trackedTexts.begin(); it != trackedTexts.end();) {
             if (!gcHandleGetTarget(it->second.weakHandle)) {
@@ -1021,9 +873,9 @@ void rememberTranslatedText(void* self, Il2CppString* input, Il2CppString* outpu
 
 void refreshTranslatedText(void* self) {
     if (!self || !runtimeInvoke || !origTmpSetText || !stringNew) return;
-    const uint64_t generation = translationGeneration.load(std::memory_order_acquire);
+    const uint64_t generation = translations.generation();
     if (generation == 1) return;
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     auto it = trackedTexts.find(self);
     if (it == trackedTexts.end() || it->second.generation == generation) return;
     if (!gcHandleGetTarget || gcHandleGetTarget(it->second.weakHandle) != self) {
@@ -1045,16 +897,9 @@ void refreshTranslatedText(void* self) {
     }
     std::string desired = it->second.source;
     if (!it->second.i18nKey.empty()) {
-        const auto variants = i18nBySource.find(it->second.i18nKey);
-        if (variants != i18nBySource.end()) {
-            const auto selected = variants->second.find(it->second.source);
-            if (selected != variants->second.end() && !selected->second.empty())
-                desired = selected->second;
-        } else {
-            const auto selected = i18nDict.find(it->second.i18nKey);
-            if (selected != i18nDict.end() && !selected->second.empty())
-                desired = selected->second;
-        }
+        const auto* selected = translations.catalog().resolveI18n(
+            it->second.i18nKey, it->second.source);
+        if (selected) desired = *selected;
     }
     auto* replacement = stringNew(desired.c_str());
     if (!replacement) return;
@@ -1111,7 +956,7 @@ void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* me
 // to this frame's graphic rebuild queue after a data/profile/capture change.
 void hookCanvasWillRender(void* method) {
     collectConstrainedTitleFonts();
-    const uint64_t textGeneration = translationGeneration.load(std::memory_order_acquire);
+    const uint64_t textGeneration = translations.generation();
     const uint64_t fontGeneration = fontProfileGeneration.load(std::memory_order_acquire);
     const uint64_t captureGeneration = layoutCaptureGeneration.load(std::memory_order_acquire);
     const uint64_t storyGeneration = storySwapPlaybackGeneration.load(std::memory_order_acquire);
@@ -1122,7 +967,7 @@ void hookCanvasWillRender(void* method) {
     const bool captureChanged = captureGeneration != canvasCaptureGeneration &&
         textCaptureEnabled.load(std::memory_order_acquire);
     if (storyChanged || textChanged || fontChanged || captureGeneration != canvasCaptureGeneration) {
-        std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+        std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
         canvasDirtyQueue.clear();
         canvasDirtyCursor = 0;
         for (auto it = registeredTmpUi.begin(); it != registeredTmpUi.end();) {
@@ -1173,7 +1018,7 @@ void hookCanvasWillRender(void* method) {
 // Captured labels are fitted before mesh generation, after game layouts.
 // Only the preview buttons change bounds; badges retain original geometry.
 void fitCapturedButtonLabel(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
     static const auto getTransform = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform", 0);
     static const auto getParent = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "get_parent", 0);
@@ -1410,7 +1255,7 @@ std::string uiFontPolicyPath(void* self) {
 }
 
 void refreshDefaultUiFont(void* self) {
-    if (!self || !fontEnabled || fontMode != FontMode::ReplaceUi || !runtimeInvoke) return;
+    if (!self || !translations.options().fontEnabled || translations.options().fontMode != FontMode::ReplaceUi || !runtimeInvoke) return;
     const auto path = uiFontPolicyPath(self);
     const auto found = fontBaselines.find(self);
     auto* baseline = found != fontBaselines.end() ? fontBaseline(self) : nullptr;
@@ -1438,7 +1283,7 @@ void refreshDefaultUiFont(void* self) {
 // Scope by the captured label path and original bounds; its adjacent level
 // number remains governed by the existing original-font policy.
 void sizeHeaderManagerLabel(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll","UnityEngine","Object","get_name"));
     if (utf8(name) != "ManagerLabel" || textObjectPath(self) !=
@@ -1466,7 +1311,7 @@ void sizeHeaderManagerLabel(void* self) {
 // line breaks and overflow enabled. Longer translations and taller replacement
 // metrics must fit that same box instead of overlapping the description.
 void fitStoryOpeningTitle(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
     if (utf8(name) != "Title" || textObjectPath(self) !=
@@ -1507,7 +1352,7 @@ void fitStoryOpeningTitle(void* self) {
 }
 
 void hookTmpPreRender(void* self, void* method) {
-    std::lock_guard<std::recursive_mutex> frameLock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> frameLock(translations.frameMutex());
     registerTmpUi(self);
     refreshTranslatedText(self);
     refreshStorySwapTitle(self);
@@ -1526,7 +1371,7 @@ void hookTmpPreRender(void* self, void* method) {
     alignActivityReceiveName(self);
     alignActivityResultAile(self);
     if (self && fontProfileGeneration.load() > 1 && runtimeInvoke) {
-        std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+        std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
         auto* baseline = fontBaseline(self);
         const auto generation = fontProfileGeneration.load();
         if (baseline && baseline->generation != generation) {
@@ -1544,7 +1389,7 @@ void hookTmpPreRender(void* self, void* method) {
             refreshProfileMaterials();
         }
     }
-    if (self && fontEnabled && replacesCjk() && runtimeInvoke && objectUnbox) {
+    if (self && translations.options().fontEnabled && replacesCjk() && runtimeInvoke && objectUnbox) {
         static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
         static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
         static const auto getRectTransform = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_rectTransform", 0);
@@ -1570,7 +1415,7 @@ void hookTmpPreRender(void* self, void* method) {
                     }
                 }
             }
-            if (!exception && homeRankOrSupportLayoutCandidate(utf8(label), fontMode == FontMode::ReplaceAll)) {
+            if (!exception && homeRankOrSupportLayoutCandidate(utf8(label), translations.options().fontMode == FontMode::ReplaceAll)) {
                 static const auto getRect = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform", "get_rect", 0);
                 static const auto getAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_enableAutoSizing", 0);
                 static const auto setAuto = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_enableAutoSizing", 1);
@@ -1679,7 +1524,7 @@ void hookLegacySetText(void* self, Il2CppString* value, void* method) {
 }
 
 void hookI18nSetValue(void* self, Il2CppString* key, Il2CppString* value, void* method) {
-    std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> dictionaryLock(translations.frameMutex());
     const std::string keyText = utf8(key);
     const std::string source = utf8(value);
     auto applyResolved = [&](const std::string& text) {
@@ -1702,18 +1547,9 @@ void hookI18nSetValue(void* self, Il2CppString* key, Il2CppString* value, void* 
         origI18nSetValue(self, key, result, method);
         resolvingI18n = previous;
     };
-    const auto variants = i18nBySource.find(keyText);
-    if (variants != i18nBySource.end()) {
-        const auto selected = variants->second.find(source);
-        if (selected != variants->second.end() && !selected->second.empty() && stringNew) {
-            applyResolved(selected->second);
-            return;
-        }
-    }
-    auto found = i18nDict.find(keyText);
-    if (variants == i18nBySource.end() && found != i18nDict.end() &&
-        !found->second.empty() && stringNew) {
-        applyResolved(found->second);
+    const auto* selected = translations.catalog().resolveI18n(keyText, source);
+    if (selected && stringNew) {
+        applyResolved(*selected);
     } else {
         dump("i18n", source, keyText);
         origI18nSetValue(self, key, value, method);
@@ -1721,7 +1557,7 @@ void hookI18nSetValue(void* self, Il2CppString* key, Il2CppString* value, void* 
 }
 
 void captureOctoSettings(void* settings) {
-    if (!captureOcto || !settings || !runtimeInvoke || !objectGetClass ||
+    if (!translations.options().captureOcto || !settings || !runtimeInvoke || !objectGetClass ||
         !classGetMethodFromName || !objectUnbox || octoCaptured.load()) return;
     std::lock_guard<std::mutex> lock(octoCaptureMutex);
     if (octoCaptured.load()) return;
@@ -1778,7 +1614,7 @@ bool tryResourceLoad(Il2CppString* resourceName, void* onComplete) {
     if (name.find("adv_") != std::string::npos) {
         LOGI("Octo adventure request: %.160s", name.c_str());
     }
-    if (resourceReplace && name.size() >= 4 &&
+    if (translations.options().resourceReplace && name.size() >= 4 &&
         name.compare(name.size() - 4, 4, ".txt") == 0 &&
         name.find('/') == std::string::npos &&
         name.find('\\') == std::string::npos && name != "." && name != ".." &&
@@ -1828,7 +1664,7 @@ bool tryResourceLoad(Il2CppString* resourceName, void* onComplete) {
                 runtimeInvoke(invoke, onComplete, args, &exception);
                 if (!exception) {
                     if (loadedAlias) {
-                        std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+                        std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
                         // A nested/newer adventure request owns its own playback.
                         if (storySwapPlaybackGeneration == playbackGeneration) {
                             activeStorySwapTitles = std::move(playbackTitles);
@@ -1906,7 +1742,7 @@ void hookGetBlob(void* self, int32_t column, void** blob, int32_t* length, void*
 }
 
 void logMasterMethods() {
-    if (!probeMaster || !classGetMethods || !methodGetName || !methodGetParamCount ||
+    if (!translations.options().probeMaster || !classGetMethods || !methodGetName || !methodGetParamCount ||
         !methodGetParam || !methodGetReturnType || !typeGetName) return;
     struct Target { const char* image; const char* nameSpace; const char* name; };
     constexpr Target targets[] = {
@@ -1949,7 +1785,7 @@ void logMasterMethods() {
 // setter after the scene loads. Translate that initial value when enabled.
 bool hasTrackedRenderedText(void* self, Il2CppString* current) {
     if (!self || !current || !gcHandleGetTarget) return false;
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     const auto tracked = trackedTexts.find(self);
     return tracked != trackedTexts.end() &&
         gcHandleGetTarget(tracked->second.weakHandle) == self &&
@@ -1999,7 +1835,7 @@ void hookTmpOnEnable(void* self, void* method) {
 
 bool tryAssetLoad(Il2CppString* assetName, void* onComplete) {
     const std::string name = utf8(assetName);
-    if (!assetReplace || name.empty() || name.find('/') != std::string::npos ||
+    if (!translations.options().assetReplace || name.empty() || name.find('/') != std::string::npos ||
         name.find('\\') != std::string::npos || name == "." || name == ".." ||
         !onComplete || !arrayNew || !runtimeInvoke || !objectGetClass ||
         !classGetMethodFromName) return false;
@@ -2050,7 +1886,7 @@ bool tryAssetLoad(Il2CppString* assetName, void* onComplete) {
 void hookAssetLoad(void* self, Il2CppString* assetName, void* onComplete,
                    void* onProgress, void* method) {
     const std::string name = utf8(assetName);
-    if (dumpEnabled && (name.find("banner") != std::string::npos ||
+    if (translations.options().dumpEnabled && (name.find("banner") != std::string::npos ||
                         name.find("pvp") != std::string::npos))
         LOGI("Octo banner request: %s", name.c_str());
     if (!tryAssetLoad(assetName, onComplete))
@@ -2234,7 +2070,7 @@ StoryFontRole ordinaryStoryRole(void* self, void* originalMaterial) {
 }
 
 void applyStorySubtitleLayout(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
         fontBaselines.find(self) == fontBaselines.end()) return;
     auto* baseline = fontBaseline(self);
     // Registered only after the original subtitle size/material guards pass.
@@ -2447,7 +2283,7 @@ void* storyMaterial(void* shared, StoryStyle style, void* stableSource = nullptr
 }
 
 void restoreStoryNameColor(void* textObject) {
-    if (!fontEnabled || !replacesCjk() || !textObject ||
+    if (!translations.options().fontEnabled || !replacesCjk() || !textObject ||
         !runtimeInvoke || !objectUnbox) return;
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
     static const auto getSize = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSize", 0);
@@ -2554,7 +2390,7 @@ void* loadedCjkFont(bool independentReplacement = false, bool rounded = false) {
 }
 
 void updateLegacyFont(void* textObject, Il2CppString* rendered) {
-    if (!fontEnabled || !usesIndependentFontRouting() || !textObject || !rendered ||
+    if (!translations.options().fontEnabled || !usesIndependentFontRouting() || !textObject || !rendered ||
         !runtimeInvoke || !gcHandleGetTarget || !gcHandleNew || !gcHandleNewWeak || !gcHandleFree) return;
     std::lock_guard<std::recursive_mutex> lock(fontMutex);
     static const auto getFont = methodInfo("UnityEngine.UI.dll", "UnityEngine.UI", "Text", "get_font", 0);
@@ -2570,7 +2406,7 @@ void updateLegacyFont(void* textObject, Il2CppString* rendered) {
         originalLegacyFonts.erase(saved);
         saved = originalLegacyFonts.end();
     }
-    const bool useReplacement = fontMode == FontMode::ReplaceUi
+    const bool useReplacement = translations.options().fontMode == FontMode::ReplaceUi
         ? ui_font_policy::usesReplacement(uiFontPolicyPath(textObject),
             rendered->length >= 0 && ui_font_policy::isNumericSymbolText(static_cast<size_t>(rendered->length),
                 [&](size_t i) { return rendered->chars[i]; }))
@@ -2622,7 +2458,7 @@ void updateLegacyFont(void* textObject, Il2CppString* rendered) {
 // fitting to the 40-unit row makes CJK names jump from 40 to 27.6 points when
 // a later setter reuses the same label. Keep the selected size before layout.
 void applyPortraitNameLayout(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self, "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
     if (utf8(name) != "Text") return;
     static const std::string suffix = "/Love UI/Message Area/Message Container/Message Root/Name Container/Layout Group/Name Label/Text";
@@ -2818,7 +2654,7 @@ void* createStoryFont(void* font, void* original, void* originalMaterial) {
     return result;
 }
 void synchronizeTmpRendererMaterial(void* self) {
-    if (!usesIndependentFontRouting() || !fontEnabled || !isTmpUi(self)) return;
+    if (!usesIndependentFontRouting() || !translations.options().fontEnabled || !isTmpUi(self)) return;
     std::lock_guard<std::recursive_mutex> lock(fontMutex);
     // Baseline lifetime is independent of the original material snapshot, which
     // is released immediately after a successful Latin restoration.
@@ -2974,7 +2810,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
     // contains CJK. Only the glyph-lookup buffer is authoritative in this mode;
     // getter-based setter/pre-render calls must not undo its font/material.
     if (usesIndependentFontRouting() && !replacementOverride) return;
-    if (!fontEnabled || !textObject || !runtimeInvoke) return;
+    if (!translations.options().fontEnabled || !textObject || !runtimeInvoke) return;
     std::lock_guard<std::recursive_mutex> lock(fontMutex);
     static const auto getInstanceId = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine",
                                                   "Object", "GetInstanceID", 0);
@@ -2985,7 +2821,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
     if (preserveOriginalFont && instanceId) preserveOriginalFontObjects.insert(instanceId);
     const bool preserveLegacyFont = !usesIndependentFontRouting() &&
         (preserveOriginalFont || (instanceId && preserveOriginalFontObjects.count(instanceId)));
-    const FontMode effectiveMode = preserveLegacyFont ? FontMode::Fallback : fontMode;
+    const FontMode effectiveMode = preserveLegacyFont ? FontMode::Fallback : translations.options().fontMode;
     static const auto getFont = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_font", 0);
     static const auto setFont = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_font", 1);
     static const auto getSharedMaterial = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "get_fontSharedMaterial", 0);
@@ -3425,7 +3261,7 @@ void updateFont(void* textObject, bool preserveOriginalFont, const bool* replace
 }
 
 void* storyPunctuationFont(void* self) {
-    if (!fontEnabled || !usesIndependentFontRouting() || !self) return nullptr;
+    if (!translations.options().fontEnabled || !usesIndependentFontRouting() || !self) return nullptr;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
     const auto label = utf8(name);
@@ -3455,13 +3291,13 @@ void* hookGetCharacter(uint32_t unicode, void* font, bool fallbacks, int32_t sty
 }
 
 void routeTmpFontAfterSetter(void* textObject) {
-    if (!fontEnabled || !usesIndependentFontRouting() || !textObject) return;
+    if (!translations.options().fontEnabled || !usesIndependentFontRouting() || !textObject) return;
     updateFont(textObject);
     applyStorySubtitleLayout(textObject);
 }
 
 void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
-    if (!fontEnabled || !usesIndependentFontRouting() || !self || !array) return;
+    if (!translations.options().fontEnabled || !usesIndependentFontRouting() || !self || !array) return;
     // This 64-bit IL2CPP array carries final UnicodeChar text, including TMP's
     // formatted SetText/SetCharArray paths whose string getter may lag behind.
     auto* data = static_cast<char*>(array);
@@ -3469,13 +3305,13 @@ void routeTmpFontBeforeGlyphLookup(void* self, void* array) {
     if (count > 65536) return;
     const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(data + 32);
     const bool numericSymbols = ui_font_policy::isNumericSymbolBuffer(chars, count);
-    if (fontMode == FontMode::ReplaceUi && isTmpUi(self)) {
+    if (translations.options().fontMode == FontMode::ReplaceUi && isTmpUi(self)) {
         if (auto* baseline = fontBaseline(self)) {
             baseline->glyphFontRouteKnown = true;
             baseline->glyphNumericSymbols = numericSymbols;
         }
     }
-    const bool useReplacement = fontMode == FontMode::ReplaceUi
+    const bool useReplacement = translations.options().fontMode == FontMode::ReplaceUi
         ? ui_font_policy::usesReplacement(uiFontPolicyPath(self), numericSymbols)
         : (mixed_font_router::hasCjkBuffer(chars, count) ||
            (count >= 5 && (chars[0].unicode == '3' || chars[0].unicode == 'L') &&
@@ -3576,7 +3412,7 @@ void* prepareLoveEpisodeGlyphs(void* self, void* array) {
 
 void* prepareFormattedUiGlyphs(void* self, void* array) {
     if (!self || !array || !runtimeInvoke) return array;
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     const auto* input = static_cast<const Il2CppByteArray*>(array);
     if (input->length == 0 || input->length > 65536) return array;
     const auto* chars = reinterpret_cast<const mixed_font_router::UnicodeChar*>(input->data);
@@ -3592,16 +3428,16 @@ void* prepareFormattedUiGlyphs(void* self, void* array) {
     std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
     const auto text = converter.to_bytes(decoded);
     const bool medal = !guild_medal_font::decorate(text, "probe").empty();
-    const bool activity = homeActivityNames.mayMatch(text);
-    const auto durationPattern = i18nDict.find("activity.characterSelect.duration");
-    const bool duration = durationPattern != i18nDict.end() &&
-        homeActivityNames.mayMatchDuration(text, durationPattern->second);
+    const bool activity = translations.catalog().homeActivityNames.mayMatch(text);
+    const auto durationPattern = translations.catalog().i18n.find("activity.characterSelect.duration");
+    const bool duration = durationPattern != translations.catalog().i18n.end() &&
+        translations.catalog().homeActivityNames.mayMatchDuration(text, durationPattern->second);
     if (!medal && !activity && !duration) return array;
     const auto path = textObjectPath(self);
     std::string desired;
     if (medal && guild_medal_font::matches(path)) desired = guildMedalRenderedText(self, text);
-    else if (activity) desired = homeActivityNames.translate(text, path);
-    else if (duration) desired = homeActivityNames.translateDuration(text, path, durationPattern->second);
+    else if (activity) desired = translations.catalog().homeActivityNames.translate(text, path);
+    else if (duration) desired = translations.catalog().homeActivityNames.translateDuration(text, path, durationPattern->second);
     if (desired.empty() || desired == text) return array;
     bool applied = false;
     void* updated = rebuildTmpGlyphBuffer(self, array, desired, &applied);
@@ -3780,12 +3616,12 @@ void installTextHooks() {
                           "ResultSet", "GetBlob", 3),
             reinterpret_cast<void*>(hookGetBlob), origGetBlob);
     }
-    if (captureOcto) {
+    if (translations.options().captureOcto) {
         installMethod("Octo.OctoManager.Setup",
             methodPointer("Octo.dll", "Octo", "OctoManager", "Setup", 2),
             reinterpret_cast<void*>(hookOctoSetup), origOctoSetup);
     }
-    if (resourceReplace) {
+    if (translations.options().resourceReplace) {
         void* klass = findClass("Octo.dll", "Octo.Loader", "OctoResourceLoader");
         void* iterator = nullptr;
         while (klass && classGetMethods && methodGetName && methodGetParamCount &&
@@ -3808,7 +3644,7 @@ void installTextHooks() {
         }
         LOGI("Octo text resource hook %s", origResourceLoad ? "ready" : "unavailable");
     }
-    if (assetReplace && classGetMethods && methodGetName && methodGetParamCount &&
+    if (translations.options().assetReplace && classGetMethods && methodGetName && methodGetParamCount &&
         methodGetParam && typeGetName) {
         void* klass = findClass("Octo.dll", "Octo.Loader", "OctoAssetBundleLoader");
         void* iterator = nullptr;
@@ -3821,7 +3657,7 @@ void installTextHooks() {
             char* rawType = typeGetName(methodGetParam(candidate, 1));
             std::string callbackType = rawType ? rawType : "";
             if (rawType && il2cppFree) il2cppFree(rawType);
-            if (dumpEnabled) LOGI("Octo asset callback type: %s", callbackType.c_str());
+            if (translations.options().dumpEnabled) LOGI("Octo asset callback type: %s", callbackType.c_str());
             if (callbackType.find("UnityEngine.AssetBundle") == std::string::npos ||
                 callbackType.find("Octo.LoadError") == std::string::npos) continue;
             if (installMethod("OctoAssetBundleLoader.LoadFromCacheOrDownload",
@@ -3853,156 +3689,25 @@ std::string javaString(JNIEnv* env, jstring value) {
 bool loadDictionary(const std::string& path, bool reload = false,
                     bool* restartRequired = nullptr, bool deferApply = false) {
     if (restartRequired) *restartRequired = false;
-    std::ifstream input(path);
-    if (!input) { LOGE("Dictionary missing: %s", path.c_str()); return false; }
     try {
-        nlohmann::json root = nlohmann::json::parse(input);
-        if (!root.is_object()) throw std::runtime_error("dictionary must be an object");
-        if (reload && (!root.contains("text") || !root.contains("i18n")))
-            throw std::runtime_error("reload requires text and i18n maps");
-        decltype(textDict) nextText;
-        decltype(legalTextDict) nextLegal;
-        decltype(i18nDict) nextI18n;
-        decltype(i18nBySource) nextVariants;
-        std::unordered_set<std::string> nextTranslatedValues;
-        UserTemplateMatcher nextUserTemplates;
-        NumericTextTemplateMatcher nextNumericTemplates;
-        HomeActivityNameMatcher nextHomeActivityNames;
-        auto loadMap = [](const nlohmann::json& node, auto& destination) {
-            if (!node.is_object()) throw std::runtime_error("dictionary map must be an object");
-            for (auto it = node.begin(); it != node.end(); ++it) {
-                if (!it.value().is_string() || it.value().get<std::string>().empty())
-                    throw std::runtime_error("dictionary map contains an invalid value");
-                destination[it.key()] = it.value().get<std::string>();
-            }
-        };
-        loadMap(root.value("text", nlohmann::json::object()), nextText);
-        const auto numericEntries = root.value("numeric_text_templates", nlohmann::json::object());
-        if (!numericEntries.is_object() || numericEntries.size() > 128)
-            throw std::runtime_error("invalid numeric_text_templates map");
-        for (auto it = numericEntries.begin(); it != numericEntries.end(); ++it) {
-            if (!it.value().is_string() || !nextNumericTemplates.add(it.key(), it.value().get<std::string>()))
-                throw std::runtime_error("invalid numeric text template");
+        const auto status = translations.load(path, reload, deferApply, restartRequired != nullptr);
+        if (status == localify::DictionaryUpdate::RestartRequired) {
+            *restartRequired = true;
+            LOGI("Validated dictionary requires a game restart; live state retained");
+        } else {
+            std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
+            const auto& catalog = translations.catalog();
+            LOGI("Loaded %zu text, %zu legal, %zu i18n, %zu source variants, %zu unique translated values and %zu player-name templates; dump=%d",
+                 catalog.text.size(), catalog.legal.size(), catalog.i18n.size(), catalog.variantCount,
+                 catalog.translatedValues.size(), catalog.userTemplates.size(), translations.options().dumpEnabled);
         }
-        const auto activityNames = root.value("home_activity_names", nlohmann::json::object());
-        if (!activityNames.is_object() || activityNames.size() > 64)
-            throw std::runtime_error("invalid home_activity_names map");
-        for (auto it = activityNames.begin(); it != activityNames.end(); ++it) {
-            if (!it.value().is_string() ||
-                    !nextHomeActivityNames.add(it.key(), it.value().get<std::string>()))
-                throw std::runtime_error("invalid home activity name");
-        }
-        const auto legalEntries = root.value("legal_by_type", nlohmann::json::object());
-        if (!legalEntries.is_object())
-            throw std::runtime_error("legal_by_type must be an object");
-        for (auto it = legalEntries.begin(); it != legalEntries.end(); ++it) {
-            const std::string type = it.key();
-            if (type.size() != 1 || type[0] < '1' || type[0] > '7' ||
-                !it.value().is_object() || it.value().size() != 2 ||
-                !it.value().contains("source") || !it.value().contains("translation") ||
-                !it.value()["source"].is_string() ||
-                !it.value()["translation"].is_string())
-                throw std::runtime_error("invalid legal_by_type entry");
-            const auto source = it.value()["source"].get<std::string>();
-            const auto translated = it.value()["translation"].get<std::string>();
-            if (source.empty() || translated.empty() ||
-                source.size() > 1024 * 1024 || translated.size() > 1024 * 1024 ||
-                source.find('\0') != std::string::npos ||
-                translated.find('\0') != std::string::npos)
-                throw std::runtime_error("legal_by_type text size invalid");
-            const auto previous = nextLegal.find(source);
-            if (previous != nextLegal.end() && previous->second != translated)
-                throw std::runtime_error("legal_by_type source conflict");
-            nextLegal.emplace(source, translated);
-        }
-        loadMap(root.value("i18n", nlohmann::json::object()), nextI18n);
-        const auto variants = root.value("i18n_by_source", nlohmann::json::object());
-        if (!variants.is_object())
-            throw std::runtime_error("i18n_by_source must be an object");
-        for (auto it = variants.begin(); it != variants.end(); ++it)
-            loadMap(it.value(), nextVariants[it.key()]);
-        const bool nextDumpEnabled = root.value("dump", false);
-        const bool nextResourceReplace = root.value("resource_replace", true);
-        const bool nextAssetReplace = root.value("asset_replace", true);
-        const bool nextCaptureOcto = root.value("capture_octo", false);
-        const bool nextProbeMaster = root.value("probe_master", false);
-        const bool nextFontEnabled = root.value("font", false);
-        const std::string mode = root.value("font_mode", std::string("fallback"));
-        FontMode nextFontMode;
-        if (mode == "replace-translated") nextFontMode = FontMode::ReplaceTranslated;
-        else if (mode == "replace-all") nextFontMode = FontMode::ReplaceAll;
-        else if (mode == "preserve-non-cjk") nextFontMode = FontMode::PreserveNonCjk;
-        else if (mode == "replace-ui") nextFontMode = FontMode::ReplaceUi;
-        else if (mode == "fallback") nextFontMode = FontMode::Fallback;
-        else throw std::runtime_error("font_mode must be fallback, replace-translated, replace-all, preserve-non-cjk, or replace-ui");
-        for (const auto& [source, translated] : nextText)
-            nextTranslatedValues.insert(translated);
-        for (const auto& [source, translated] : nextLegal)
-            nextTranslatedValues.insert(translated);
-        for (const auto& [key, translated] : nextI18n)
-            nextTranslatedValues.insert(translated);
-        size_t variantCount = 0;
-        for (const auto& [key, translations] : nextVariants) {
-            for (const auto& [source, translated] : translations) {
-                if (source != translated) nextTranslatedValues.insert(translated);
-                ++variantCount;
-            }
-        }
-        const auto storyValues = root.value("translated_values", nlohmann::json::array());
-        if (!storyValues.is_array())
-            throw std::runtime_error("translated_values must be an array");
-        for (const auto& value : storyValues) {
-            if (!value.is_string())
-                throw std::runtime_error("translated_values entries must be strings");
-            const std::string translated = value.get<std::string>();
-            if (!translated.empty()) nextTranslatedValues.insert(translated);
-        }
-        for (const auto& translated : nextTranslatedValues)
-            nextUserTemplates.add(translated);
-        std::lock_guard<std::recursive_mutex> dictionaryLock(dictionaryMutex);
-        if (reload && (deferApply || nextDumpEnabled != dumpEnabled ||
-                nextResourceReplace != resourceReplace || nextAssetReplace != assetReplace ||
-                nextCaptureOcto != captureOcto || nextProbeMaster != probeMaster ||
-                nextFontEnabled != fontEnabled || nextFontMode != fontMode)) {
-            // The entire dictionary is valid, but startup-only hooks cannot be
-            // changed in this process. Let the updater commit it for next boot
-            // without swapping any live dictionaries or runtime configuration.
-            if (restartRequired) {
-                *restartRequired = true;
-                LOGI("Validated dictionary requires a game restart; live state retained");
-                return true;
-            }
-            throw std::runtime_error("runtime configuration changes require restarting the game");
-        }
-        for (const auto& source : masterBlobPatches.suppressedSources())
-            nextText.erase(source);
-        textDict.swap(nextText);
-        legalTextDict.swap(nextLegal);
-        i18nDict.swap(nextI18n);
-        i18nBySource.swap(nextVariants);
-        translatedValues.swap(nextTranslatedValues);
-        translatedUserTemplates = std::move(nextUserTemplates);
-        numericTextTemplates = std::move(nextNumericTemplates);
-        homeActivityNames = std::move(nextHomeActivityNames);
-        if (reload) translationGeneration.fetch_add(1, std::memory_order_release);
-        if (!reload) {
-            dumpEnabled = nextDumpEnabled;
-            resourceReplace = nextResourceReplace;
-            assetReplace = nextAssetReplace;
-            captureOcto = nextCaptureOcto;
-            probeMaster = nextProbeMaster;
-            fontEnabled = nextFontEnabled;
-            fontMode = nextFontMode;
-        }
-        LOGI("Loaded %zu text, %zu legal, %zu i18n, %zu source variants, %zu unique translated values and %zu player-name templates; dump=%d",
-             textDict.size(), legalTextDict.size(), i18nDict.size(), variantCount, translatedValues.size(),
-             translatedUserTemplates.size(), dumpEnabled);
         return true;
     } catch (const std::exception& error) {
         LOGE("Cannot parse dictionary: %s", error.what());
         return false;
     }
 }
+
 } // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -4048,7 +3753,7 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeApplyFontProfiles(JNI
     if (!encoded) return JNI_FALSE;
     FontProfileConfig candidate;
     if (!candidate.assign(javaString(env, encoded))) return JNI_FALSE;
-    std::lock_guard<std::recursive_mutex> frameLock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> frameLock(translations.frameMutex());
     std::lock_guard<std::mutex> lock(profileMutex);
     fontProfiles = std::move(candidate);
     fontProfileGeneration.fetch_add(1);
@@ -4056,7 +3761,7 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeApplyFontProfiles(JNI
 }
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeResetFontProfiles(JNIEnv*, jclass) {
-    std::lock_guard<std::recursive_mutex> frameLock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> frameLock(translations.frameMutex());
     std::lock_guard<std::mutex> lock(profileMutex);
     fontProfiles = FontProfileConfig();
     fontProfileGeneration.fetch_add(1);
@@ -4157,9 +3862,7 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeInstall(
     if (std::ifstream(masterBlobPath, std::ios::binary)) {
         try {
             const size_t patches = masterBlobPatches.load(masterBlobPath);
-            size_t suppressed = 0;
-            for (const auto& source : masterBlobPatches.suppressedSources())
-                suppressed += textDict.erase(source);
+            const size_t suppressed = translations.suppressMasterSources(masterBlobPatches.suppressedSources());
             LOGI("Loaded %zu MasterDB Blob patches; suppressed %zu global Text sources",
                  patches, suppressed);
         } catch (const std::exception& error) {

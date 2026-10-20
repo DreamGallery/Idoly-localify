@@ -43,11 +43,14 @@ class SourceExportTests(CollaborationImportTests):
         self.assertFalse(any(path.startswith('story/ai') for path in paths))
     def test_diagnostics_excluded_but_glossary_and_overrides_included(self):
         for relative in ('legal/runtime.json', 'legal/validation.json', 'ui/test-evidence.json',
-                         'glossary/names.json', 'master/overrides.json'):
+                         'glossary/names.json', 'master/overrides.json',
+                         'master/record-keys.json', 'master/field-keys.json'):
             self.json('translations/' + relative, {})
         paths = exports.export_sources(self.project, self.csv, self.sources, self.repo)
         self.assertIn('glossary/names.json', paths)
         self.assertIn('master/overrides.json', paths)
+        self.assertIn('master/record-keys.json', paths)
+        self.assertIn('master/field-keys.json', paths)
         self.assertNotIn('legal/runtime.json', paths)
         self.assertNotIn('legal/validation.json', paths)
         self.assertNotIn('ui/test-evidence.json', paths)

@@ -4,6 +4,7 @@ build/
 app/build/
 app/.cxx/
 .analysis/
+.agent-local/
 .DS_Store
 __pycache__/
 *.pyc

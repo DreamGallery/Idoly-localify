@@ -1,7 +1,7 @@
 // TMP supports selecting a font within a single label. Register the retained
 // game font and apply it only to this control's numeric suffix, including commas.
 std::string guildMedalRenderedText(void* self, const std::string& plain) {
-    if (!self || !fontEnabled || !usesIndependentFontRouting() || !runtimeInvoke ||
+    if (!self || !translations.options().fontEnabled || !usesIndependentFontRouting() || !runtimeInvoke ||
         !objectUnbox || !stringNew) return {};
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
     if (guild_medal_font::decorate(plain, "probe").empty()) return {};
@@ -88,7 +88,7 @@ void alignGuildTopTitles(void* self) {
 }
 
 void alignGuildPointNumbers(void* self) {
-    if (!self || !fontEnabled || fontMode != FontMode::ReplaceUi ||
+    if (!self || !translations.options().fontEnabled || translations.options().fontMode != FontMode::ReplaceUi ||
         !runtimeInvoke || !objectUnbox || !stringNew) return;
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
     void* error = nullptr;

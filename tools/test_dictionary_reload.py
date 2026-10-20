@@ -1,4 +1,4 @@
-"""Exercise the production native loader, including deferred startup settings."""
+"""Link the portable runtime directly, including deferred startup settings."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,15 +9,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def build_loader_test(directory):
-    source = (ROOT / 'app/src/main/cpp/localify.cpp').read_text()
-    start = source.index('bool loadDictionary(')
-    end = source.index('\n} // namespace', start)
-    (directory / 'dictionary_loader_under_test.inc').write_text(source[start:end])
     binary = directory / 'dictionary-reload-test'
-    subprocess.run(['c++', '-std=c++17', '-O1', '-I', str(directory),
+    subprocess.run(['c++', '-std=c++17', '-O1',
                     '-I', str(ROOT / 'app/src/main/cpp'),
                     '-I', str(ROOT / 'app/src/main/cpp/third_party'),
-                    str(ROOT / 'tools/test_dictionary_reload.cpp'), '-o', str(binary)],
+                    str(ROOT / 'tools/test_dictionary_reload.cpp'),
+                    str(ROOT / 'app/src/main/cpp/runtime/dictionary_catalog.cpp'),
+                    str(ROOT / 'app/src/main/cpp/runtime/dictionary_runtime.cpp'),
+                    '-o', str(binary)],
                    check=True, capture_output=True)
     return binary
 

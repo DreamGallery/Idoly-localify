@@ -15,7 +15,12 @@ class NormalizeMasterNamesTests(unittest.TestCase):
                                    "Message", "3", "text"), "里美小姐的车")
         self.assertEqual(normalize("さとみさんが来る", "里见先生来了，让他给我买",
                                    "Message", "message-event-ladder-24-1208-01",
-                                   "details[38].text"), "里美小姐来了，让她给我买")
+                                   'details[key={"messageDetailId":"42-1"}].text'),
+                         "里美小姐来了，让她给我买")
+        self.assertEqual(normalize("さとみさんが来る", "里见先生来了，让他给我买",
+                                   "Message", "message-event-ladder-24-1208-01",
+                                   'details[key={"messageDetailId":"42-2"}].text'),
+                         "里美小姐来了，让他给我买")
 
 
 if __name__ == "__main__":

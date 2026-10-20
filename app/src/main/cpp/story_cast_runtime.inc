@@ -11,7 +11,7 @@ struct StoryCastPage {
 std::unordered_map<void*, StoryCastPage> storyCastPages;
 
 void hookStoryCastChanged(void* self, Il2CppString* asset, void* method) {
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     if (!self || !asset || !stringNew || !gcHandleNewWeak || !gcHandleGetTarget || !gcHandleFree) {
         origStoryCastChanged(self, asset, method);
         return;
@@ -46,7 +46,7 @@ void hookStoryCastChanged(void* self, Il2CppString* asset, void* method) {
 }
 
 void refreshStorySwapCast() {
-    std::lock_guard<std::recursive_mutex> lock(dictionaryMutex);
+    std::lock_guard<std::recursive_mutex> lock(translations.frameMutex());
     if (!storyCastChangedMethod || !runtimeInvoke || !stringNew || !gcHandleGetTarget || !gcHandleFree) return;
     std::vector<std::pair<uint32_t, std::string>> pending;
     for (auto it = storyCastPages.begin(); it != storyCastPages.end();) {

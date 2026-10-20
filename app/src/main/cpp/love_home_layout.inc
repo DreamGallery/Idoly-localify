@@ -2,7 +2,7 @@
 // group's symmetric padding, including when the text is shorter than that
 // minimum; TMP alignment alone only centers within the smaller text rectangle.
 void centerLoveHomeDialogue(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     static bool running = false;
     if (running) return;
     static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);

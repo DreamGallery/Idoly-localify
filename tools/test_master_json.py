@@ -7,11 +7,67 @@ import unittest
 from unittest.mock import patch
 
 import master_json
+from master_identity import record_key
 from master_json import (build, build_keyed, export, plan, read_table,
                          text_fields, unclassified_fields)
 
 
 class MasterJsonTests(unittest.TestCase):
+    def test_business_identity_survives_reorder_insert_and_source_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw, orig, zh = (root / name for name in ("raw", "orig", "zh"))
+            raw.mkdir()
+            a = {"key": "context.a", "word": "同じ原文"}
+            b = {"key": "context.b", "word": "同じ原文"}
+            ka, kb = (record_key("Wording", row) for row in (a, b))
+            source_file = raw / "Wording.json"
+            source_file.write_text(json.dumps([a, b]))
+            export(raw, orig, zh)
+            (zh / "Wording.json").write_text(json.dumps({
+                ka: {"word": "不同语境甲"}, kb: {"word": "同じ原文"}}))
+            c = {"key": "context.c", "word": "新しい文章"}
+            source_file.write_text(json.dumps([b, c, a]))
+            export(raw, orig, zh)
+            self.assertEqual(read_table(zh / "Wording.json"), {
+                ka: {"word": "不同语境甲"}, kb: {"word": "同じ原文"}})
+            source_file.write_text(json.dumps([dict(a, word="変わった文章"), c]))
+            export(raw, orig, zh)
+            self.assertEqual(read_table(zh / "Wording.json"), {})
+            self.assertNotIn(kb, read_table(orig / "Wording.json"))
+
+    def test_unknown_missing_or_duplicate_identity_fails_before_writing(self):
+        cases = [("Wording", [{"key": "a", "word": "文章"},
+                              {"key": "a", "word": "別の文章"}]),
+                 ("Wording", [{"word": "文章"}]),
+                 ("NewTable", [{"word": "文章"}])]
+        for table, rows in cases:
+            with self.subTest(table=table, rows=rows), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                raw = root / "raw"
+                raw.mkdir()
+                (raw / f"{table}.json").write_text(json.dumps(rows))
+                with self.assertRaises(ValueError):
+                    export(raw, root / "orig", root / "zh")
+                self.assertFalse((root / "orig").exists())
+                self.assertFalse((root / "zh").exists())
+
+    def test_legacy_business_keys_require_verified_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw, orig, zh = (root / name for name in ("raw", "orig", "zh"))
+            for path in (raw, orig, zh):
+                path.mkdir()
+            (raw / "Wording.json").write_text(json.dumps([{"key": "real.key", "word": "文章"}]))
+            (orig / "Wording.json").write_text('{"0":{"word":"文章"}}')
+            (zh / "Wording.json").write_text('{"0":{"word":"译文"}}')
+            before = [(path / "Wording.json").read_bytes() for path in (orig, zh)]
+            with self.assertRaisesRegex(ValueError, "migrate identities"):
+                export(raw, orig, zh)
+            with self.assertRaisesRegex(ValueError, "migrate identities"):
+                list(master_json.iter_fields(orig, zh))
+            self.assertEqual(before, [(path / "Wording.json").read_bytes() for path in (orig, zh)])
+
     def test_plan_require_complete_fails_for_untranslated_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -4,7 +4,9 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from master_blob_patches import encrypted_pack, field_slot, patch_blob, retained_conflicts
+from master_blob_patches import encrypted_pack, field_slot, input_snapshot, patch_blob, retained_conflicts
+from master_identity import rules_metadata
+from master_field_paths import field_rules_metadata
 
 
 class FakeMessage:
@@ -24,6 +26,30 @@ class FakeMessage:
 
 
 class MasterBlobPatchTests(unittest.TestCase):
+    def test_cached_snapshot_rejects_interrupted_migration_and_unknown_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tag, orig, zh = root / "tag.pb", root / "master/orig", root / "master/zh-Hans"
+            orig.mkdir(parents=True)
+            zh.mkdir()
+            tag.write_bytes(b"tag")
+            for path in (orig / "Story.json", zh / "Story.json"):
+                path.write_text("{}")
+            snapshot = input_snapshot(tag, orig, zh, {"Story"})
+            self.assertEqual(snapshot["record_keys"], rules_metadata())
+            self.assertEqual(snapshot["field_keys"], field_rules_metadata())
+            marker = orig.parent / ".master-key-migration-in-progress.json"
+            marker.write_text("{}")
+            with self.assertRaisesRegex(ValueError, "interrupted"):
+                input_snapshot(tag, orig, zh, {"Story"})
+            marker.unlink()
+            for filename in ("record-keys.json", "field-keys.json"):
+                schema = orig.parent / filename
+                schema.write_text('{"schema_version":999}')
+                with self.assertRaisesRegex(ValueError, "unsupported"):
+                    input_snapshot(tag, orig, zh, {"Story"})
+                schema.unlink()
+
     def test_encrypted_pack_cache_is_bound_to_tag_and_hash(self):
         class Request:
             calls = 0

@@ -27,7 +27,7 @@ void* getComponentByType(void* component, const char* assembly, const char* ns, 
 
 
 void fitPanoramaLabels(void* self) {
-    if (!self || !fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
+    if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox ||
         !stringNew || !classGetType || !typeGetObject) return;
     static bool running = false;
     if (running) return;

@@ -19,7 +19,8 @@ def normalize(source: str, target: str, table: str, record_id: str,
                     .replace("里见女士", "里美小姐")
                     .replace("里见", "里美"))
     if (table, record_id, field_path) == (
-            "Message", "message-event-ladder-24-1208-01", "details[38].text"):
+            "Message", "message-event-ladder-24-1208-01",
+            'details[key={"messageDetailId":"42-1"}].text'):
         result = result.replace("让他给我", "让她给我")
     return result
 
