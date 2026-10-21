@@ -63,6 +63,19 @@ class FrozenBatchTests(unittest.TestCase):
         self.git('fetch', 'origin', 'main', cwd=self.main)
         self.git('checkout', '--detach', 'FETCH_HEAD', cwd=self.main)
         self.base = self.git('rev-parse', 'HEAD', cwd=self.main)
+    def upstream_baseline(self):
+        upstream = {'schema_version': 1, 'story': {'resource_revision': 1076, 'resource_snapshot_sha256': 'a' * 64},
+                    'master': {'master_tag_version': 'old', 'orig_snapshot_sha256': 'b' * 64}}
+        self.write(self.main, 'upstream.json', json.dumps(upstream))
+        self.base = self.commit(self.main)
+        self.git('push', 'origin', 'main', cwd=self.main)
+        self.git('fetch', 'origin', 'main', cwd=self.collab)
+        self.git('merge', '--ff-only', 'FETCH_HEAD', cwd=self.collab)
+        self.story(); receipt = self.prepare()
+        upstream['master'] = {'master_tag_version': 'refreshed', 'orig_snapshot_sha256': 'c' * 64}
+        self.write(self.stage, 'upstream.json', json.dumps(upstream))
+        frozen.commit_batch(self.main, self.stage, self.base, receipt); self.advance_main()
+        return upstream, receipt
     def test_frozen_snapshot_single_parent_commit_ignores_later_collaboration(self):
         relative = self.story()
         self.write(self.collab, 'story/drafts/translation/adv_draft.csv', 'unfinished draft')
@@ -117,6 +130,81 @@ class FrozenBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'both changed'):
             frozen.stage_cutoff(self.main, self.collab, self.stage)
         self.assertIn('main correction', (self.main / 'notice/zh-Hans.json').read_text())
+    def test_upstream_story_refresh_preserves_main_master_migration(self):
+        main, receipt = self.upstream_baseline()
+        main['master']['orig_snapshot_sha256'] = 'd' * 64
+        self.write(self.main, 'upstream.json', json.dumps(main, sort_keys=True, indent=2)); self.commit(self.main)
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        collab['story']['resource_revision'] = 1078
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        hashes = frozen.stage_cutoff(self.main, self.collab, self.stage)
+        merged = json.loads((self.stage / 'upstream.json').read_text())
+        self.assertEqual(merged['story'], collab['story'])
+        self.assertEqual(merged['master'], main['master'])
+        self.assertEqual(hashes['upstream.json'], frozen.hashed((self.collab / 'upstream.json').read_bytes()))
+        self.assertEqual(json.loads((self.main / 'upstream.json').read_text()), main)
+        self.assertEqual(json.loads((self.collab / 'upstream.json').read_text()), collab)
+        expected_head = self.git('rev-parse', 'HEAD', cwd=self.main)
+        self.git('push', 'origin', 'HEAD:main', cwd=self.main)
+        receipt.update(main_parent=expected_head, collaboration_baseline=hashes,
+                       cutoff=self.git('rev-parse', 'HEAD', cwd=self.collab))
+        frozen.commit_batch(self.main, self.stage, expected_head, receipt); self.advance_main()
+        collab['story']['resource_revision'] = 1079
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        frozen.stage_cutoff(self.main, self.collab, self.stage)
+        merged = json.loads((self.stage / 'upstream.json').read_text())
+        self.assertEqual(merged['story'], collab['story'])
+        self.assertEqual(merged['master'], main['master'])
+    def test_upstream_unchanged_published_master_is_not_reverted_to_collaboration(self):
+        main, receipt = self.upstream_baseline()
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        collab['story']['resource_revision'] = 1078
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        frozen.stage_cutoff(self.main, self.collab, self.stage)
+        merged = json.loads((self.stage / 'upstream.json').read_text())
+        self.assertEqual(merged['master'], main['master'])
+        self.assertEqual(merged['story']['resource_revision'], 1078)
+    def test_upstream_same_snapshot_group_conflict_still_stops(self):
+        main, receipt = self.upstream_baseline()
+        main['story']['resource_snapshot_sha256'] = 'd' * 64
+        self.write(self.main, 'upstream.json', json.dumps(main)); self.commit(self.main)
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        collab['story']['resource_revision'] = 1078
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        with self.assertRaisesRegex(ValueError, 'both changed.*upstream.json/story'):
+            frozen.stage_cutoff(self.main, self.collab, self.stage)
+        self.assertEqual(json.loads((self.main / 'upstream.json').read_text()), main)
+    def test_upstream_formatting_change_does_not_revert_published_master(self):
+        main, receipt = self.upstream_baseline()
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        self.write(self.collab, 'upstream.json', json.dumps(collab, indent=2, sort_keys=True)); self.commit(self.collab)
+        frozen.stage_cutoff(self.main, self.collab, self.stage)
+        self.assertEqual((self.stage / 'upstream.json').read_bytes(), (self.main / 'upstream.json').read_bytes())
+    def test_upstream_baseline_must_match_receipt(self):
+        main, receipt = self.upstream_baseline()
+        stored = json.loads((self.main / frozen.RECEIPT).read_text())
+        stored['published_data']['upstream.json'] = 'f' * 64
+        self.write(self.main, frozen.RECEIPT, json.dumps(stored)); self.commit(self.main)
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        collab['story']['resource_revision'] = 1078
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        with self.assertRaisesRegex(ValueError, 'baseline does not match publication receipt'):
+            frozen.stage_cutoff(self.main, self.collab, self.stage)
+    def test_upstream_independent_changes_before_first_publication(self):
+        upstream = {'schema_version': 1, 'story': {'resource_revision': 1076},
+                    'master': {'master_tag_version': 'old'}}
+        self.write(self.main, 'upstream.json', json.dumps(upstream)); self.commit(self.main)
+        self.git('fetch', str(self.main), 'main', cwd=self.collab)
+        self.git('merge', '--ff-only', 'FETCH_HEAD', cwd=self.collab)
+        upstream['master']['master_tag_version'] = 'new'
+        self.write(self.main, 'upstream.json', json.dumps(upstream)); self.commit(self.main)
+        collab = json.loads((self.collab / 'upstream.json').read_text())
+        collab['story']['resource_revision'] = 1078
+        self.write(self.collab, 'upstream.json', json.dumps(collab)); self.commit(self.collab)
+        frozen.stage_cutoff(self.main, self.collab, self.stage)
+        merged = json.loads((self.stage / 'upstream.json').read_text())
+        self.assertEqual(merged['story'], collab['story'])
+        self.assertEqual(merged['master'], upstream['master'])
     def test_main_advance_after_freeze_fails_without_second_commit(self):
         self.story(); receipt = self.prepare()
         self.write(self.collab, 'README.md', 'unrelated main update'); advance = self.commit(self.collab)

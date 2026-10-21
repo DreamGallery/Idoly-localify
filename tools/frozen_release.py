@@ -144,6 +144,47 @@ def write_tree(root, data):
             target.write_bytes(value)
 
 
+def upstream_at(repository, commit, expected_hash):
+    """Read the immutable provenance recorded by a publication receipt."""
+    if not SHA.fullmatch(commit):
+        raise ValueError('Invalid upstream baseline commit')
+    raw = subprocess.run(['git', '-C', str(repository), 'cat-file', 'blob',
+                          commit + ':upstream.json'], check=True, capture_output=True).stdout
+    if hashed(raw) != expected_hash:
+        raise ValueError('Upstream baseline does not match publication receipt')
+    return raw
+
+
+def merge_upstream_sections(before, after, previous, baseline):
+    """Apply collaboration deltas without reverting independently refreshed sources.
+
+    Story and MasterDB snapshots are separate provenance groups. Keep each group
+    atomic so a version, counts and digest cannot come from different snapshots.
+    The collaboration and published baselines may themselves differ after refresh.
+    """
+    current, incoming, old_collaboration, old_published = [
+        json.loads(raw) for raw in (before, after, previous, baseline)]
+    if any(not isinstance(value, dict) for value in
+           (current, incoming, old_collaboration, old_published)):
+        raise ValueError('Upstream provenance must be a JSON object')
+    missing = object()
+    merged = dict(current)
+    for key in sorted(set(old_collaboration) | set(incoming)):
+        new_value = incoming.get(key, missing)
+        if old_collaboration.get(key, missing) == new_value:
+            continue
+        current_value = current.get(key, missing)
+        if current_value != old_published.get(key, missing) and current_value != new_value:
+            raise ValueError('Main and collaboration both changed publication data: upstream.json/' + key)
+        if new_value is missing:
+            merged.pop(key, None)
+        else:
+            merged[key] = new_value
+    if merged == current:
+        return before
+    return (json.dumps(merged, ensure_ascii=False, indent=2) + '\n').encode()
+
+
 def stage_cutoff(main, collaboration, destination):
     """Apply only collaboration changes since the previous published projection."""
     for checkout in (main, collaboration):
@@ -155,12 +196,16 @@ def stage_cutoff(main, collaboration, destination):
     if receipt:
         repository_git(collaboration, 'merge-base', '--is-ancestor', receipt['cutoff'], 'HEAD')
         previous, baseline = receipt['collaboration_baseline'], receipt['published_data']
+        previous_repository, previous_commit = collaboration, receipt['cutoff']
+        published_commit = receipt_commit(main)
     else:
         # Bootstrap against the actual common ancestor, never assume equal trees.
         git = lambda *args: repository_git(main, *args)
         cutoff = repository_git(collaboration, 'rev-parse', 'HEAD')
         git('fetch', str(collaboration), cutoff)
         ancestor = git('merge-base', 'HEAD', cutoff)
+        previous_repository, previous_commit = main, ancestor
+        published_commit = ancestor
         with tempfile.TemporaryDirectory(prefix='idoly-publication-base-') as tmp:
             checkout = Path(tmp) / 'checkout'
             git('worktree', 'add', '--detach', str(checkout), ancestor)
@@ -174,6 +219,12 @@ def stage_cutoff(main, collaboration, destination):
     for path in sorted(set(previous) | set(hashes)):
         if previous.get(path) == hashes.get(path): continue
         before, after = main_data.get(path), incoming.get(path)
+        if (path == 'upstream.json' and before is not None and after is not None
+                and previous.get(path) is not None and baseline.get(path) is not None):
+            changes[path] = merge_upstream_sections(before, after,
+                upstream_at(previous_repository, previous_commit, previous[path]),
+                upstream_at(main, published_commit, baseline[path]))
+            continue
         if hashed(before) != baseline.get(path) and before != after:
             raise ValueError('Main and collaboration both changed publication data: ' + path)
         changes[path] = after
