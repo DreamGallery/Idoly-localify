@@ -127,4 +127,4 @@ python3 tools/deploy_text.py verify --serial "$ANDROID_SERIAL"
 
 发布构建使用稳定的维护者密钥，避免换服务器后无法覆盖安装旧版本。设置 `IDOLY_KEYSTORE_FILE`、`IDOLY_KEYSTORE_PASSWORD`、`IDOLY_KEY_ALIAS`、`IDOLY_KEY_PASSWORD` 后执行 `./gradlew :app:assembleRelease`。缺少签名配置时发布构建失败。密钥与密码只保存在本机或自托管运行器的私有配置目录，不能进入代码或翻译仓库。
 
-所有 GitHub Actions 均在翻译仓库配置；插件源码、工具源码从各自私有仓库拉取。正式构建的 APK 发布到翻译仓库，仅版本变化时创建新版本。测试设备的调试签名与正式签名不同，不能直接覆盖安装；验证正式包时应使用单独模块配置或独立测试环境并先处理数据迁移。
+所有 GitHub Actions 均在翻译仓库配置；插件源码、工具源码从各自仓库拉取。正式构建的 APK 发布到翻译仓库，仅版本变化时创建新版本。测试设备的调试签名与正式签名不同，不能直接覆盖安装；验证正式包时应使用单独模块配置或独立测试环境并先处理数据迁移。
