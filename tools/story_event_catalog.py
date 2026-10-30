@@ -1,7 +1,8 @@
 """Build same-format event pickers from reviewed MasterDB relationships.
 
-Only a single Story.advAssetIds script with play type 1 is eligible. In
-particular LoveStoryEpisode.assetId names a presentation asset, not the TXT.
+Only a single Story.advAssetIds script with play type 1 and a prefix accepted
+by the runtime picker is eligible. MasterDB categories can reuse scripts from
+other categories. LoveStoryEpisode.assetId names a presentation asset, not the TXT.
 """
 import json
 import re
@@ -30,9 +31,14 @@ def build(root: Path, kind: str) -> bytes:
             raise ValueError(f"Ambiguous story reference: {story_id}")
         reference = value["references"][0]
         asset = value["assets"][0]
-        if (reference["category"] != kind or
-                not re.fullmatch(kind + r"_[a-z0-9_]+", asset) or asset.endswith("_short")):
+        if (reference["category"] != kind or not isinstance(asset, str) or
+                not re.fullmatch(r"[a-z][a-z0-9]*_[a-z0-9_]+", asset)):
             raise ValueError(f"Invalid story script: {story_id}")
+        # EventStory can reference a main_* script. Existing plugins accept only
+        # their picker's prefix; omit unsupported/short entries here without
+        # excluding their scripts or MasterDB records from text translation.
+        if not asset.startswith(kind + "_") or asset.endswith("_short"):
+            continue
         file = f"adv_{asset}.txt"
         group = reference["event_id" if kind == "event" else "love_id"]
         group_name = (events.get(group, {}).get("description") or group) if kind == "event" else "特殊活动 · " + group.removeprefix("love-")

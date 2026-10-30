@@ -9,6 +9,49 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class EventCatalogTests(unittest.TestCase):
+    def build_event_fixture(self, root, asset, reference_category="event"):
+        rows = {
+            "st-eve-2610-dice-001": {"categories": ["event"], "name": "Event story",
+                "adv_play_types": [1], "assets": [asset],
+                "references": [{"category": reference_category,
+                                "event_id": "st-eve-2610-dice", "episode": 1}]},
+            "st-eve-supported-001": {"categories": ["event"], "name": "Supported story",
+                "adv_play_types": [1], "assets": ["event_2610_01_01"],
+                "references": [{"category": "event", "event_id": "st-eve-supported",
+                                "episode": 1}]},
+        }
+        for name, value in {"translations/story-metadata/catalog.json": {"stories": rows},
+                            "translations/master/zh-Hans/Story.json": {}}.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(value), encoding="utf-8")
+        return json.loads(build(root, "event"))["stories"]
+
+    def test_event_reusing_main_script_is_omitted_from_picker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = self.build_event_fixture(root, "main_04_15_01")
+            self.assertEqual([row["file"] for row in rows], ["adv_event_2610_01_01.txt"])
+            # Selection must not modify the full category index used by translation.
+            source = json.loads((root / "translations/story-metadata/catalog.json").read_text())
+            self.assertEqual(source["stories"]["st-eve-2610-dice-001"]["assets"], ["main_04_15_01"])
+
+    def test_short_script_is_omitted_from_picker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            rows = self.build_event_fixture(Path(directory), "event_2610_01_01_short")
+            self.assertEqual([row["file"] for row in rows], ["adv_event_2610_01_01.txt"])
+
+    def test_invalid_script_still_blocks_catalog(self):
+        for asset in ("../main_04_15_01", "main_04/15_01", "event_2610_01_01.txt", "", None):
+            with self.subTest(asset=asset), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "Invalid story script"):
+                    self.build_event_fixture(Path(directory), asset)
+
+    def test_mismatched_reference_still_blocks_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "Invalid story script"):
+                self.build_event_fixture(Path(directory), "event_2610_01_01", "love")
+
     def test_bundled_catalogs_match_sources_and_scope(self):
         source = json.loads((ROOT / "translations/story-metadata/catalog.json").read_text())["stories"]
         for kind in ("event", "love"):
