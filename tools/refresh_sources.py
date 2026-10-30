@@ -160,12 +160,43 @@ def fetched_state(args) -> dict:
     if (raw / ".master-fetch-in-progress.json").exists():
         raise ValueError("Master fetch is incomplete")
     return {"app_version": args.app_version, "source_dir": str(args.source_dir),
+            "activity_notice_discovery": 1,
             "master_tag": digest(args.work_dir / "master-tag.pb"),
             "masterdata": directory(raw, "*.json"),
             "scripts": directory(args.source_dir, "adv_*.txt"),
             "manifest": digest(args.toolkit_dir / "cache/OctoManifest.json"),
             "notice_index": digest(args.work_dir / "notice-index.json"),
             "notice_pages": digest(args.work_dir / "notice-pages.json")}
+
+
+def refresh_notice_inputs(args, command, summary):
+    """Use the same merged index in collection, translation and resumed runs."""
+    notice_cli = [args.api_python, args.toolkit_dir / "notice_fetch.py"]
+    index, pages = args.work_dir / "notice-index.json", args.work_dir / "notice-pages.json"
+    if not args.reuse_fetched:
+        day = ["--initialize-day"] if args.initialize_collector_day else []
+        command("notice-index", [*notice_cli, "official-index", "--solis-dir", args.solis_dir,
+                "--app-version", args.app_version, "--account", args.notice_account,
+                "--include-activities", "--output", index, *day], args.toolkit_dir)
+    discovery = read_json(index).get("_activities")
+    if (not isinstance(discovery, dict) or discovery.get("schema_version") != 1 or
+            not isinstance(discovery.get("activities"), list) or
+            not isinstance(discovery.get("complete_for_supported_activities"), bool)):
+        raise ValueError("Official notice index is missing activity discovery status")
+    summary["activity_notices"] = discovery
+    for activity in discovery["activities"]:
+        if activity["status"] != "ok":
+            message = ("Activity notice discovery incomplete: " + activity["service"] +
+                       " (" + activity["status"] + "); other notice pages will continue")
+            print(message, flush=True)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                print("::warning title=Activity notices::" + escaped, flush=True)
+    if not args.reuse_fetched:
+        command("notice-pages", [*notice_cli, "archive-pages", "--input", index,
+                "--cache-dir", args.toolkit_dir / "cache/notice/refresh-page-cache", "--output", pages,
+                "--report", args.work_dir / "notice-fetch-report.json", "--refresh"], args.toolkit_dir)
+    return index, pages
 
 
 def run(args) -> dict:
@@ -243,15 +274,7 @@ def run(args) -> dict:
         command("story-catalog", [args.python, ROOT / "tools/story_catalog.py", raw_master,
                                  args.translations_dir / "story-metadata/catalog.json"])
 
-        notice_cli = [args.api_python, args.toolkit_dir / "notice_fetch.py"]
-        index, pages = args.work_dir / "notice-index.json", args.work_dir / "notice-pages.json"
-        if not args.reuse_fetched:
-            day = ["--initialize-day"] if args.initialize_collector_day else []
-            command("notice-index", [*notice_cli, "official-index", "--solis-dir", args.solis_dir,
-                    "--app-version", args.app_version, "--account", args.notice_account, "--output", index, *day], args.toolkit_dir)
-            command("notice-pages", [*notice_cli, "archive-pages", "--input", index,
-                    "--cache-dir", args.toolkit_dir / "cache/notice/refresh-page-cache", "--output", pages,
-                    "--report", args.work_dir / "notice-fetch-report.json", "--refresh"], args.toolkit_dir)
+        index, pages = refresh_notice_inputs(args, command, summary)
         from web_notice import import_pages, reuse_reviewed_new_titles
         summary["stage"] = "notice-import"
         notice_source = args.translations_dir / "notice/source.json"

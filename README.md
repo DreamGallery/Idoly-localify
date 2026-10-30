@@ -8,6 +8,7 @@
 - **LSPatch**：将模块嵌入游戏安装包。字体与汉化图片由模块在运行时加载，保留游戏原始资源。
 - 通用字体为 Noto Sans CJK SC SemiBold，若恋对白和按钮采用 Resource Han Rounded SC Bold；指定数字、价格等控件保留原字体。
 - 详细设置可关闭翻译、删除本地译文或清理采集文件。翻译开关在重启游戏后生效。
+- 「额外功能」提供按类别开启的[实验性内容预览](docs/content-preview.md)：服装、发型／发饰、姿势和名片装饰；不改变账号持有数据，仅当前进程生效。
 
 当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建插件需要 Android SDK、NDK、JDK 17+、Python 3.12+；使用 LSPatch 修补游戏需要 JDK 21+。具体依赖和命令见[构建说明](docs/build.md)。
 

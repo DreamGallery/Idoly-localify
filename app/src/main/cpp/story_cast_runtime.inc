@@ -92,15 +92,13 @@ void installStorySwapCastHook() {
     if (result) il2cppFree(result);
     if (parameter) il2cppFree(parameter);
     if (!valid) return;
-    void* original = nullptr;
     void* stub = shadowhook_hook_func_addr(method->methodPointer,
-        reinterpret_cast<void*>(hookStoryCastChanged), &original);
-    if (!stub || !original) {
+        reinterpret_cast<void*>(hookStoryCastChanged), reinterpret_cast<void**>(&origStoryCastChanged));
+    if (!stub || !origStoryCastChanged) {
         if (stub) shadowhook_unhook(stub);
         LOGE("Story cast hook unavailable");
         return;
     }
-    origStoryCastChanged = reinterpret_cast<StoryCastChanged>(original);
     storyCastChangedMethod = method;
     LOGI("StoryCharactersPage.OnStoryChanged hook installed");
 }

@@ -25,6 +25,10 @@
 
 #include "json.hpp"
 #include "runtime/dictionary.h"
+#include "runtime/preview_access.h"
+#include "button_minimum_layout.h"
+#include "tmp_text_signature.h"
+#include "inline_hook.h"
 #include "master_blob_matcher.h"
 #include "story_swap.h"
 #include "gacha_pickup_layout.h"
@@ -191,6 +195,7 @@ std::unordered_map<void*, uint32_t> retainedFontObjects;
 std::unordered_set<int32_t> preserveOriginalFontObjects;
 std::atomic<bool> hooksInstalled{false};
 std::atomic<bool> installerCalled{false};
+std::atomic<bool> localizationEnabledForProcess{false};
 
 FontProfileConfig fontProfiles;
 std::mutex profileMutex;
@@ -282,6 +287,8 @@ using SetArraySizesFn = int32_t (*)(void*, void*, void*);
 using GetCharacterFn = void* (*)(uint32_t, void*, bool, int32_t, int32_t, bool*, void*);
 GetCharacterFn origGetCharacter = nullptr;
 thread_local void* currentStoryPunctuationFont = nullptr;
+thread_local bool measuringButtonLabel = false;
+void preserveButtonMinimumWidth(void* self, Il2CppString* input);
 void* storyPunctuationFont(void* self);
 struct StoryPunctuationScope {
     void* previous;
@@ -367,6 +374,34 @@ void* findClass(const char* imageName, const char* nameSpace, const char* classN
 const MethodInfoHead* methodInfo(const char* imageName, const char* nameSpace,
                                  const char* className, const char* methodName,
                                  int parameterCount);
+
+const MethodInfoHead* tmpStringSetter(uint32_t count) {
+    const auto resolve = [](uint32_t wanted) -> const MethodInfoHead* {
+        if (!classGetMethods || !methodGetName || !methodGetParamCount || !methodGetParam ||
+            !methodGetReturnType || !methodGetFlags || !typeGetName || !il2cppFree) return nullptr;
+        void* klass = findClass("Unity.TextMeshPro.dll", "TMPro", "TMP_Text");
+        if (!klass) return nullptr;
+        const auto name = [](const void* type) {
+            char* raw = type ? typeGetName(type) : nullptr;
+            std::string value = raw ? raw : "";
+            if (raw) il2cppFree(raw);
+            return value;
+        };
+        void* iterator = nullptr;
+        while (const auto* method = classGetMethods(klass, &iterator)) {
+            if (std::strcmp(methodGetName(method), "SetText") || methodGetParamCount(method) != wanted) continue;
+            std::vector<std::string> parameters;
+            for (uint32_t i = 0; i < wanted; ++i) parameters.push_back(name(methodGetParam(method, i)));
+            uint32_t implementation = 0;
+            const bool isStatic = methodGetFlags(method, &implementation) & 0x0010u;
+            if (tmp_text_signature::stringSetter(name(methodGetReturnType(method)), isStatic, parameters)) return method;
+        }
+        return nullptr;
+    };
+    static const auto one = resolve(1);
+    static const auto two = resolve(2);
+    return count == 1 ? one : count == 2 ? two : nullptr;
+}
 
 std::string utf8(const Il2CppString* value) {
     if (!value || value->length <= 0 || value->length > 1024 * 1024) return {};
@@ -925,6 +960,7 @@ void refreshTranslatedText(void* self) {
 }
 
 void hookTmpSetText(void* self, Il2CppString* value, void* method) {
+    preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetText(self, translated, method);
@@ -934,6 +970,7 @@ void hookTmpSetText(void* self, Il2CppString* value, void* method) {
 }
 
 void hookTmpSetTextOne(void* self, Il2CppString* value, void* method) {
+    preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetTextOne(self, translated, method);
@@ -943,6 +980,7 @@ void hookTmpSetTextOne(void* self, Il2CppString* value, void* method) {
 }
 
 void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* method) {
+    preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
     origTmpSetTextTwo(self, translated, syncInput, method);
@@ -1161,6 +1199,7 @@ void fitCapturedButtonLabel(void* self) {
 }
 
 #include "panorama_label_runtime.inc"
+#include "button_minimum_layout.inc"
 #include "gallery_footer_layout.inc"
 #include "love_mission_layout.inc"
 #include "love_home_layout.inc"
@@ -1819,6 +1858,7 @@ void hookTmpOnEnable(void* self, void* method) {
         refreshTranslatedText(self);
         return;
     }
+    preserveButtonMinimumWidth(self, current);
     auto* translated = translateText(self, current);
     if (translated == current) {
         rememberTranslatedText(self, current, translated);
@@ -3354,24 +3394,7 @@ void* rebuildTmpGlyphBuffer(void* self, void* array, const std::string& desired,
         !classGetFieldFromName || !stringNew) return array;
     static void* klass = findClass("Unity.TextMeshPro.dll", "TMPro", "TMP_Text");
     static void* processingField = klass ? classGetFieldFromName(klass, "m_TextProcessingArray") : nullptr;
-    static const auto setText = []() -> const MethodInfoHead* {
-        if (!klass || !classGetMethods || !methodGetName || !methodGetParamCount ||
-            !methodGetParam || !typeGetName || !il2cppFree) return nullptr;
-        const auto parameterIs = [](const MethodInfoHead* method, int index, const char* expected) {
-            char* name = typeGetName(methodGetParam(method, index));
-            const bool matches = name && std::strcmp(name, expected) == 0;
-            if (name) il2cppFree(name);
-            return matches;
-        };
-        void* iterator = nullptr;
-        while (const auto* method = classGetMethods(klass, &iterator)) {
-            const uint32_t count = methodGetParamCount(method);
-            if (std::strcmp(methodGetName(method), "SetText") != 0 || (count != 1 && count != 2)) continue;
-            if (parameterIs(method, 0, "System.String") &&
-                (count == 1 || parameterIs(method, 1, "System.Boolean"))) return method;
-        }
-        return nullptr;
-    }();
+    static const auto setText = tmpStringSetter(1) ? tmpStringSetter(1) : tmpStringSetter(2);
     if (!processingField || !setText) {
         static int reports = 0;
         if (reports++ < 4) LOGE("Formatted UI buffer API unavailable: field=%d setter=%d", processingField != nullptr, setText != nullptr);
@@ -3449,6 +3472,7 @@ void* prepareFormattedUiGlyphs(void* self, void* array) {
 }
 
 int32_t hookTmpUiSetArraySizes(void* self, void* array, void* method) {
+    if (measuringButtonLabel) return origTmpUiSetArraySizes(self, array, method);
     array = prepareLoveEpisodeGlyphs(self, array);
     array = prepareFormattedUiGlyphs(self, array);
     routeTmpFontBeforeGlyphLookup(self, array);
@@ -3469,28 +3493,17 @@ bool installMethod(const char* label, void* target, void* replacement, T& origin
         LOGI("%s method unavailable", label);
         return false;
     }
-    void* trampoline = nullptr;
-    void* stub = shadowhook_hook_func_addr(target, replacement, &trampoline);
-    if (!stub || !trampoline) {
+    if (!localify::installInlineHook(target, replacement, original, shadowhook_hook_func_addr)) {
         LOGE("%s hook failed: %s", label, shadowhook_to_errmsg(shadowhook_get_errno()));
         return false;
     }
-    original = reinterpret_cast<T>(trampoline);
     LOGI("%s hook installed", label);
     return true;
 }
 
 #include "runtime_ui_images.inc"
 
-void installTextHooks() {
-    if (hooksInstalled.exchange(true)) return;
-    int installed = 0;
-    if (!runtimeAtlases.empty()) {
-        installed += installMethod("CanvasRenderer.SetTexture",
-            methodPointer("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "SetTexture", 1),
-            reinterpret_cast<void*>(hookCanvasSetTexture), origCanvasSetTexture);
-    }
-    installStorySwapCastHook();
+void installStoryVisibilityHooks() {
     story_bridge::install([](const char* assembly, const char* ns,
                              const char* klass, const char* name, int count) -> void* {
         const auto* info = methodInfo(assembly, ns, klass, name, count);
@@ -3562,6 +3575,17 @@ void installTextHooks() {
         return !exception && engine && engineClass &&
             classIsAssignableFrom(engineClass, objectGetClass(engine)) ? engine : nullptr;
     });
+}
+
+void installTextHooks() {
+    if (hooksInstalled.exchange(true)) return;
+    int installed = 0;
+    if (!runtimeAtlases.empty()) {
+        installed += installMethod("CanvasRenderer.SetTexture",
+            methodPointer("UnityEngine.UIModule.dll", "UnityEngine", "CanvasRenderer", "SetTexture", 1),
+            reinterpret_cast<void*>(hookCanvasSetTexture), origCanvasSetTexture);
+    }
+    installStorySwapCastHook();
     installed += installMethod("TMP_Text.set_text",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "set_text", 1),
         reinterpret_cast<void*>(hookTmpSetText), origTmpSetText);
@@ -3592,12 +3616,12 @@ void installTextHooks() {
     installed += installMethod("UnityEngine.Canvas.SendWillRenderCanvases",
         validCanvasWillRender ? canvasWillRender->methodPointer : nullptr,
         reinterpret_cast<void*>(hookCanvasWillRender), origCanvasWillRender);
-    installed += installMethod("TMP_Text.SetText(string)",
-        methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "SetText", 1),
-        reinterpret_cast<void*>(hookTmpSetTextOne), origTmpSetTextOne);
-    installed += installMethod("TMP_Text.SetText(string,bool)",
-        methodPointer("Unity.TextMeshPro.dll", "TMPro", "TMP_Text", "SetText", 2),
-        reinterpret_cast<void*>(hookTmpSetTextTwo), origTmpSetTextTwo);
+    if (const auto* setter = tmpStringSetter(1))
+        installed += installMethod("TMP_Text.SetText(string)", setter->methodPointer,
+            reinterpret_cast<void*>(hookTmpSetTextOne), origTmpSetTextOne);
+    if (const auto* setter = tmpStringSetter(2))
+        installed += installMethod("TMP_Text.SetText(string,bool)", setter->methodPointer,
+            reinterpret_cast<void*>(hookTmpSetTextTwo), origTmpSetTextTwo);
     installed += installMethod("TextMeshProUGUI.SetArraySizes",
         methodPointer("Unity.TextMeshPro.dll", "TMPro", "TextMeshProUGUI", "SetArraySizes", 1),
         reinterpret_cast<void*>(hookTmpUiSetArraySizes), origTmpUiSetArraySizes);
@@ -3672,8 +3696,17 @@ void installTextHooks() {
 
 int hookInit(const char* domainName) {
     int result = origInit(domainName);
-    logMasterMethods();
-    installTextHooks();
+    // Overlay visibility and temporary previews do not depend on localization.
+    installStoryVisibilityHooks();
+    if (localizationEnabledForProcess.load()) {
+        logMasterMethods();
+        installTextHooks();
+    } else {
+        LOGI("Translation disabled; localization hooks skipped");
+    }
+    // Optional previews own their installation/error state. They are not part
+    // of dictionary reloads, text matching, or font callback initialization.
+    localify::preview_access::install([](const char* name) { return symbol<void*>(name); });
     return result;
 }
 
@@ -3718,8 +3751,8 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeValidateMasterBlobs(
         MasterBlobMatcher candidate;
         candidate.load(javaString(env, path));
         return JNI_TRUE;
-    } catch (const std::exception&) {
-        LOGE("Downloaded MasterDB patch failed validation");
+    } catch (const std::exception& error) {
+        LOGE("Downloaded MasterDB patch failed validation: %s", error.what());
         return JNI_FALSE;
     }
 }
@@ -3839,27 +3872,44 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetTextCaptureStatus(
     return env->NewStringUTF(status.dump().c_str());
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetPreviewAccess(JNIEnv* env, jclass) {
+    return env->NewStringUTF(localify::preview_access::status().c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetPreviewAccess(
+    JNIEnv*, jclass, jint category, jboolean enabled) {
+    return localify::preview_access::setEnabled(static_cast<uint32_t>(category), enabled == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeClearPreviewAppearances(JNIEnv*, jclass) {
+    localify::preview_access::clearAppearances();
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeInstall(
     JNIEnv* env, jclass clazz, jstring libraryPath, jstring dictionaryPath, jstring outputPath,
-    jboolean runtimeImagesReady) {
+    jboolean runtimeImagesReady, jboolean translationEnabled) {
     if (installerCalled.exchange(true)) return JNI_TRUE;
+    localizationEnabledForProcess = translationEnabled == JNI_TRUE;
     story_bridge::initialize(env, clazz);
     dumpPath = javaString(env, outputPath);
     octoSettingsPath = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/octo-settings.json";
     resourceRoot = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/resource";
     assetRoot = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/asset";
-    if (runtimeImagesReady == JNI_TRUE)
+    if (localizationEnabledForProcess.load() && runtimeImagesReady == JNI_TRUE)
         loadRuntimeImages(dumpPath.substr(0, dumpPath.find_last_of('/')) + "/images");
     standaloneFontBundlePath = dumpPath.substr(0, dumpPath.find_last_of('/')) + "/resource-han-rounded.bundle";
     const std::string masterBlobPath = dumpPath.substr(0, dumpPath.find_last_of('/')) +
         "/master-blobs.bin";
     const std::string library = javaString(env, libraryPath);
-    if (!loadDictionary(javaString(env, dictionaryPath))) {
+    if (localizationEnabledForProcess.load() && !loadDictionary(javaString(env, dictionaryPath))) {
         installerCalled = false;
         return JNI_FALSE;
     }
-    if (std::ifstream(masterBlobPath, std::ios::binary)) {
+    if (localizationEnabledForProcess.load() && std::ifstream(masterBlobPath, std::ios::binary)) {
         try {
             const size_t patches = masterBlobPatches.load(masterBlobPath);
             const size_t suppressed = translations.suppressMasterSources(masterBlobPatches.suppressedSources());

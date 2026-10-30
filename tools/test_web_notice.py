@@ -10,6 +10,26 @@ PATH = "/notice/" + "a" * 64 + "/index.html"
 
 
 class WebNoticeWorkflowTest(unittest.TestCase):
+    def test_activity_notice_enters_existing_import_translation_and_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming, index, source, target, ui, output = [root / name for name in
+                ('incoming.json', 'index.json', 'source.json', 'zh-Hans.json', 'ui.json', 'compiled.json')]
+            incoming.write_text(json.dumps({'pages': {PATH: {'title': 'notice',
+                'headline': '玩法', 'texts': ['玩法', '報酬について']}}}))
+            index.write_text(json.dumps({'activityNotices': [{'id': 'event',
+                'linkDetail': 'https://stat.game-idolypride.jp' + PATH,
+                'title': '開催中', 'listTitle': 'イベント'}],
+                '_activities': {'activities': [{'status': 'locked'}]}}))
+            import_pages(incoming, source, index)
+            self.assertEqual(json.loads(source.read_text())['pages'][PATH]['entry_titles'], ['開催中', 'イベント'])
+            target.write_text(json.dumps({'pages': {PATH: {'報酬について': '关于奖励', '開催中': '举办中'}}}))
+            ui.write_text('{}')
+            compiled = build(source, target, ui, output)
+            self.assertEqual(compiled['pages'][PATH]['報酬について'], '关于奖励')
+            self.assertIn(('開催中', '举办中'), headline_aliases(source, compiled))
+            self.assertNotIn('locked', output.read_text())
+
     def test_review_seeds_only_new_untranslated_headings(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

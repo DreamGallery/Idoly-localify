@@ -30,10 +30,11 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static final String GAME = "game.qualiarts.idolypride";
     private static final AtomicBoolean STARTED = new AtomicBoolean(false);
     private static final AtomicBoolean NATIVE_READY = new AtomicBoolean(false);
+    private static volatile String initializationFailure = "";
     private static String modulePath;
 
     private static native boolean nativeInstall(String il2cppPath, String dictionaryPath, String dumpPath,
-                                                boolean runtimeImagesReady);
+                                                boolean runtimeImagesReady, boolean translationEnabled);
     private static native boolean nativeReloadDictionary(String dictionaryPath);
     private static native int nativeUpdateDictionary(String dictionaryPath, boolean deferApply);
     private static native boolean nativeValidateMasterBlobs(String path);
@@ -43,7 +44,22 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static native String nativeGetFontProfiles();
     private static native boolean nativeApplyFontProfiles(String json);
     private static native boolean nativeResetFontProfiles();
+    private static native String nativeGetPreviewAccess();
+    private static native boolean nativeSetPreviewAccess(int category, boolean enabled);
+    private static native void nativeClearPreviewAppearances();
     private static native void nativePauseCaptureWrites(boolean paused);
+
+    static String previewAccessStatus() {
+        return NATIVE_READY.get() ? nativeGetPreviewAccess() : "{\"categories\":[]}";
+    }
+
+    static boolean setPreviewAccess(int category, boolean enabled) {
+        return NATIVE_READY.get() && nativeSetPreviewAccess(category, enabled);
+    }
+
+    static void clearPreviewAppearances() {
+        if (NATIVE_READY.get()) nativeClearPreviewAppearances();
+    }
 
     static void pauseCaptureWrites(boolean paused) {
         if (NATIVE_READY.get() && TranslationPreferences.active()) nativePauseCaptureWrites(paused);
@@ -59,8 +75,9 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             : DictionaryUpdateStatus.NOT_READY;
     }
 
-    static boolean validateMasterBlobs(File file) {
-        return NATIVE_READY.get() && nativeValidateMasterBlobs(file.getAbsolutePath());
+    static void validateMasterBlobs(File file) {
+        NativeResourceValidation.masterBlobs(NATIVE_READY.get(), initializationFailure,
+            () -> nativeValidateMasterBlobs(file.getAbsolutePath()));
     }
 
     static boolean setTextCaptureEnabled(boolean enabled) {
@@ -118,6 +135,8 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
 
     private static void initialize(Context context) {
         if (!STARTED.compareAndSet(false, true)) return;
+        String stage = "准备本地目录";
+        initializationFailure = "";
         try {
             File external = context.getExternalFilesDir(null);
             File dataDir = new File(external != null ? external : context.getFilesDir(),
@@ -132,59 +151,63 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             LocalifyOverlayUi.install((Application) context.getApplicationContext());
             LocalifyOverlayUi.configure(dataDir);
             UpdateChecker.startup(context, dataDir);
+            stage = "加载原生库";
             System.loadLibrary("idoly_localify");
-            if (!TranslationPreferences.active()) {
-                // Keep the parser available for verified downloads. No Unity
-                // localization/font/resource hooks are installed in this process.
-                NATIVE_READY.set(true);
-                Log.i(TAG, "Translation disabled; settings and download validation available");
-                return;
-            }
+            final boolean translationEnabled = TranslationPreferences.active();
             File dictionary = new File(dataDir, "dict.json");
-            ensureBuiltInDictionary(context, dictionary);
-            boolean imagesReady = false;
-            try { BuiltInImagesInstaller.install(context, dataDir); imagesReady = true; }
-            catch (Exception error) {
-                Log.w(TAG, "Runtime images unavailable; original images retained", error);
-            }
-            for (String fontName : new String[]{"resource-han-rounded.bundle", "love-rounded.bundle"}) {
-                try {
-                    File font = new File(dataDir, fontName);
-                    boolean installed = BuiltInFontInstaller.install(
-                        () -> openBuiltInAsset(context, font.getName()), font);
-                    Log.i(TAG, "Module font bundle " + (installed ? "installed: " : "verified: ") + font);
-                } catch (Exception error) {
-                    // A failed update leaves the previous complete bundle available.
-                    // Native loading retries the module bundle on later text callbacks.
-                    Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
-                        + "existing complete module bundle for retry: " + fontName, error);
-                }
-            }
-            try {
-                File notices = new File(dataDir, "web-notice.json");
-                ensureBuiltInFile(context, notices, "web-notice.installed.sha256");
-                NoticeWebViewHook.configure(notices);
-            } catch (Throwable error) {
-                // A missing or damaged optional WebView dictionary must not disable
-                // the native story and interface localization hooks.
-                Log.e(TAG, "Notice WebView localization unavailable", error);
-            }
+            stage = "准备本地化资源";
+            boolean imagesReady = translationEnabled && prepareTranslationAssets(context, dataDir, dictionary);
 
+            stage = "初始化 Hook 引擎";
             ShadowHook.init(new ShadowHook.ConfigBuilder()
                 .setMode(ShadowHook.Mode.UNIQUE)
                 .build());
             File il2cpp = new File(context.getApplicationInfo().nativeLibraryDir, "libil2cpp.so");
+            stage = "安装游戏 Hook";
             boolean ok = nativeInstall(il2cpp.getAbsolutePath(), dictionary.getAbsolutePath(),
-                new File(dataDir, "dump.jsonl").getAbsolutePath(), imagesReady);
+                new File(dataDir, "dump.jsonl").getAbsolutePath(), imagesReady, translationEnabled);
             if (!ok) throw new IllegalStateException("Native installation failed");
             NATIVE_READY.set(true);
-            FontProfileEditor.restoreSaved(dataDir);
-            Log.i(TAG, "Native initialization succeeded; dictionary=" + dictionary);
+            if (translationEnabled) FontProfileEditor.restoreSaved(dataDir);
+            Log.i(TAG, "Native initialization succeeded; translation=" + translationEnabled);
         } catch (Throwable error) {
+            String detail = error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
+            initializationFailure = stage + "失败（" + detail.substring(0, Math.min(detail.length(), 280)) + "）";
             STARTED.set(false);
             NATIVE_READY.set(false);
-            Log.e(TAG, "Initialization failed", error);
+            Log.e(TAG, "Initialization failed at " + stage, error);
         }
+    }
+
+    private static boolean prepareTranslationAssets(Context context, File dataDir, File dictionary) throws Exception {
+        ensureBuiltInDictionary(context, dictionary);
+        boolean imagesReady = false;
+        try { BuiltInImagesInstaller.install(context, dataDir); imagesReady = true; }
+        catch (Exception error) {
+            Log.w(TAG, "Runtime images unavailable; original images retained", error);
+        }
+        for (String fontName : new String[]{"resource-han-rounded.bundle", "love-rounded.bundle"}) {
+            try {
+                File font = new File(dataDir, fontName);
+                boolean installed = BuiltInFontInstaller.install(
+                    () -> openBuiltInAsset(context, font.getName()), font);
+                Log.i(TAG, "Module font bundle " + (installed ? "installed: " : "verified: ") + font);
+            } catch (Exception error) {
+                // A failed update leaves the previous complete bundle available.
+                // Native loading retries the module bundle on later text callbacks.
+                Log.w(TAG, "Module font bundle unavailable or update failed; retaining any "
+                    + "existing complete module bundle for retry: " + fontName, error);
+            }
+        }
+        try {
+            File notices = new File(dataDir, "web-notice.json");
+            ensureBuiltInFile(context, notices, "web-notice.installed.sha256");
+            NoticeWebViewHook.configure(notices);
+        } catch (Throwable error) {
+            // The WebView dictionary is optional for native localization.
+            Log.e(TAG, "Notice WebView localization unavailable", error);
+        }
+        return imagesReady;
     }
 
     static InputStream openBuiltInAsset(Context context, String name) throws Exception {

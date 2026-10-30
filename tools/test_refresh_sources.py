@@ -10,6 +10,34 @@ import refresh_sources as refresh
 
 
 class RefreshSourceTests(unittest.TestCase):
+    def test_activity_notice_index_is_used_in_fresh_and_resumed_refresh(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            args = SimpleNamespace(work_dir=root, api_python='python', toolkit_dir=root / 'toolkit',
+                solis_dir=root / 'solis', notice_account=root / 'account', app_version='test',
+                reuse_fetched=False, initialize_collector_day=False)
+            discovery = {'schema_version': 1, 'complete_for_supported_activities': False,
+                         'activities': [{'service': 'Dice.Top', 'status': 'locked', 'notices': 0}]}
+            calls = []
+            def command(stage, argv, cwd):
+                calls.append((stage, argv))
+                if stage == 'notice-index':
+                    (root / 'notice-index.json').write_text(json.dumps({'_activities': discovery}))
+            summary = {}
+            with patch('builtins.print'):
+                index, _ = refresh.refresh_notice_inputs(args, command, summary)
+            self.assertIn('--include-activities', calls[0][1])
+            self.assertEqual(calls[1][1][calls[1][1].index('--input') + 1], index)
+            self.assertEqual(summary['activity_notices'], discovery)
+            args.reuse_fetched = True
+            calls.clear()
+            with patch('builtins.print'):
+                refresh.refresh_notice_inputs(args, command, {})
+            self.assertEqual(calls, [])
+            index.write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'activity discovery'):
+                refresh.refresh_notice_inputs(args, command, {})
+
     def test_notice_retry_only_after_resumable_partial_translation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

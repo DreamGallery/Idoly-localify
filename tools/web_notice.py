@@ -312,7 +312,7 @@ def import_pages(pages_path: Path, source_path: Path, index_path: Path | None = 
         pages[path] = merged
     if index_path is not None:
         index = read_json(index_path)
-        for category in ("notices", "malfunctionNotices", "prNotices"):
+        for category in ("notices", "malfunctionNotices", "prNotices", "activityNotices"):
             rows = index.get(category, [])
             if not isinstance(rows, list):
                 raise ValueError("Notice index category must be a list")

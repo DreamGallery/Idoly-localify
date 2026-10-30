@@ -66,6 +66,8 @@ final class LocalifySettingsUi {
         SettingsUiStyle.cardRow(stories, "卡片剧情替换", null, story);
         SettingsUiStyle.cardRow(stories, "普通活动剧情替换", null, eventStory);
         SettingsUiStyle.cardRow(stories, "实验性 · 特殊活动剧情替换", null, specialStory);
+        LinearLayout extras = SettingsUiStyle.card(page.body, "额外功能", null);
+        SettingsUiStyle.cardRow(extras, "实验性 · 内容解锁与预览", null, () -> PreviewAccessUi.show(activity));
         LinearLayout capture = SettingsUiStyle.card(page.body,
             capturing ? "文本采集 · 进行中" : "文本采集 · 未开启",
             "在悬浮窗开始采集，浏览待检查的页面，再停止采集。文件会自动导出到系统下载目录，仅保存在本机。");

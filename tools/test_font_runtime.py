@@ -52,6 +52,12 @@ class FontRuntimeTests(unittest.TestCase):
     def test_activity_layout_scope_and_submesh_alignment(self):
         self.run_fixture("test_activity_result_layout")
 
+    def test_button_minimum_width_scope_and_invalid_measurements(self):
+        self.run_fixture("test_button_minimum_layout")
+
+    def test_tmp_string_setter_overloads(self):
+        self.run_fixture("test_tmp_text_signature")
+
     def test_story_outline_scope_and_original_distance_range(self):
         self.run_fixture("test_story_outline_font")
 

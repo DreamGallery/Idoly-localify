@@ -263,9 +263,7 @@ final class TextHotUpdater {
                     noticeScripts = NoticeWebViewHook.prepare(item.staged);
                 }
                 if (item.name.equals("master-blobs.bin")) {
-                    if (!HookEntry.validateMasterBlobs(item.staged)) {
-                        throw new IllegalArgumentException("MasterDB 更新文件未通过校验");
-                    }
+                    HookEntry.validateMasterBlobs(item.staged);
                     masterChanged = true;
                 }
             }

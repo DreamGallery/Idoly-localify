@@ -15,10 +15,15 @@ class UpdateArchiveTests(unittest.TestCase):
     def test_archive_validation_and_selective_staging(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            result = subprocess.run([JAVAC, '-d', str(root), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdateArchive.java'), str(ROOT / 'tools/java-tests/UpdateArchiveTest.java'), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdatePolicy.java'), str(ROOT / 'tools/java-tests/UpdatePolicyTest.java'), str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify/UpdateVersion.java'), str(ROOT / 'tools/java-tests/UpdateVersionTest.java')], capture_output=True, text=True)
+            cases = ('UpdateArchive', 'UpdatePolicy', 'UpdateVersion', 'NativeResourceValidation')
+            sources = []
+            for name in cases:
+                sources.extend([str(ROOT / 'app/src/main/java/io/github/dreamgallery/idoly/localify' / (name + '.java')),
+                                str(ROOT / 'tools/java-tests' / (name + 'Test.java'))])
+            result = subprocess.run([JAVAC, '-d', str(root), *sources], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for test in ('UpdateArchiveTest', 'UpdatePolicyTest', 'UpdateVersionTest'):
-                result = subprocess.run([JAVA, '-cp', str(root), 'io.github.dreamgallery.idoly.localify.' + test, str(root)], capture_output=True, text=True)
+            for name in cases:
+                result = subprocess.run([JAVA, '-cp', str(root), 'io.github.dreamgallery.idoly.localify.' + name + 'Test', str(root)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
 if __name__ == '__main__':
