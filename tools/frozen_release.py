@@ -1,7 +1,8 @@
-"""Frozen collaboration projection and single-parent publication transactions.
+"""Frozen collaboration projection and history-preserving publication merges.
 
-Only allowlisted data enters main. Collaboration is read at one immutable SHA;
-this module never updates its branch or executes any file from that checkout.
+Only allowlisted data enters the published tree; original collaboration commits
+remain in its ancestry. Collaboration is read at one immutable SHA; this module
+never updates its branch or executes any file from that checkout.
 """
 from __future__ import annotations
 import hashlib
@@ -191,6 +192,11 @@ def stage_cutoff(main, collaboration, destination):
         if repository_git(checkout, 'status', '--porcelain', '--untracked-files=all'):
             raise ValueError('Frozen release requires clean input checkouts')
     verify_work_preserved(main, collaboration)
+    git = lambda *args: repository_git(main, *args)
+    cutoff = repository_git(collaboration, 'rev-parse', 'HEAD')
+    # Import the exact frozen history for the merge parent, including on later
+    # batches. Never fetch the moving collaboration branch during publication.
+    git('fetch', '--no-tags', str(collaboration), cutoff)
     receipt = load_receipt(main)
     main_data = data_tree(main)
     if receipt:
@@ -200,9 +206,6 @@ def stage_cutoff(main, collaboration, destination):
         published_commit = receipt_commit(main)
     else:
         # Bootstrap against the actual common ancestor, never assume equal trees.
-        git = lambda *args: repository_git(main, *args)
-        cutoff = repository_git(collaboration, 'rev-parse', 'HEAD')
-        git('fetch', str(collaboration), cutoff)
         ancestor = git('merge-base', 'HEAD', cutoff)
         previous_repository, previous_commit = main, ancestor
         published_commit = ancestor
@@ -247,10 +250,13 @@ def unchanged_batch(main, stage, content_version):
 
 
 def commit_batch(main, stage, expected_head, receipt, branch='main'):
-    """One commit, one parent, normal fast-forward push; races fail closed."""
+    """Merge frozen history with a validated tree; races fail without force push."""
     git = lambda *args: repository_git(main, *args)
     if git('rev-parse', 'HEAD') != expected_head or git('status', '--porcelain', '--untracked-files=all'):
         raise ValueError('Trusted main checkout changed during release')
+    cutoff = receipt['cutoff']
+    if not SHA.fullmatch(cutoff) or git('cat-file', '-t', cutoff) != 'commit':
+        raise ValueError('Invalid frozen collaboration commit')
     git('fetch', 'origin', branch)
     if git('rev-parse', 'FETCH_HEAD') != expected_head:
         raise ValueError('Main advanced after batch freeze; retry the same frozen batch after reconciliation')
@@ -269,11 +275,17 @@ def commit_batch(main, stage, expected_head, receipt, branch='main'):
             for start in range(0, len(paths), 100): local('add', '--', *paths[start:start + 100])
             staged = local('diff', '--cached', '--name-only').splitlines()
             if set(staged) - set(paths): raise ValueError('Unexpected staged publication files')
-            local('-c', 'user.name=Idoly localization bot', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
-                  'commit', '-m', 'Publish frozen collaboration batch ' + receipt['cutoff'][:12])
-            commit = local('rev-parse', 'HEAD')
+            # A normal content merge would also publish unfinished work and
+            # untrusted files. Attach its history to the validated index instead.
+            parents = ['-p', expected_head]
+            if cutoff != expected_head:
+                parents.extend(['-p', cutoff])
+            commit = local('-c', 'user.name=Idoly localization bot',
+                           '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+                           'commit-tree', local('write-tree'), *parents,
+                           '-m', 'Publish frozen collaboration batch ' + cutoff[:12])
             try:
-                local('push', 'origin', 'HEAD:refs/heads/' + branch)
+                local('push', 'origin', commit + ':refs/heads/' + branch)
             except subprocess.CalledProcessError:
                 git('fetch', 'origin', branch)
                 # Lost push response may still have committed successfully.
@@ -284,7 +296,7 @@ def commit_batch(main, stage, expected_head, receipt, branch='main'):
 
 
 def receipt_commit(repository):
-    return repository_git(repository, 'log', '-1', '--format=%H', '--', RECEIPT)
+    return repository_git(repository, 'log', '--first-parent', '-1', '--format=%H', '--', RECEIPT)
 
 
 def cache_assets(work, version, output, apk=None, notes=None):

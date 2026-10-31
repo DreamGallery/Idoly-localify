@@ -32,9 +32,9 @@ class FrozenBatchTests(unittest.TestCase):
         self.stage = self.root / 'stage'
     def git(self, *args, cwd=None):
         return subprocess.run(['git', *args], cwd=cwd, text=True, capture_output=True, check=True).stdout.strip()
-    def identity(self, root):
-        self.git('config', 'user.name', 'Fixture', cwd=root)
-        self.git('config', 'user.email', 'fixture@example.invalid', cwd=root)
+    def identity(self, root, name='Fixture', email='fixture@example.invalid'):
+        self.git('config', 'user.name', name, cwd=root)
+        self.git('config', 'user.email', email, cwd=root)
     def write(self, root, path, value):
         target = root / path; target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(value); return target
@@ -76,7 +76,7 @@ class FrozenBatchTests(unittest.TestCase):
         self.write(self.stage, 'upstream.json', json.dumps(upstream))
         frozen.commit_batch(self.main, self.stage, self.base, receipt); self.advance_main()
         return upstream, receipt
-    def test_frozen_snapshot_single_parent_commit_ignores_later_collaboration(self):
+    def test_frozen_merge_preserves_history_but_excludes_later_collaboration(self):
         relative = self.story()
         self.write(self.collab, 'story/drafts/translation/adv_draft.csv', 'unfinished draft')
         self.write(self.collab, 'scripts/story_migration.py', 'raise RuntimeError("untrusted")')
@@ -85,17 +85,64 @@ class FrozenBatchTests(unittest.TestCase):
         self.story('截止之后的新编辑'); newer = self.commit(self.collab)
         self.git('push', 'origin', 'collaboration', cwd=self.collab)
         commit, paths = frozen.commit_batch(self.main, self.stage, self.base, receipt)
-        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--parents', '-1', commit), commit + ' ' + self.base)
-        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--count', self.base + '..main'), '1')
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--parents', '-1', commit),
+                         ' '.join((commit, self.base, receipt['cutoff'])))
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--first-parent', '--count', self.base + '..main'), '1')
+        history = self.git('--git-dir', str(self.remote), 'rev-list', 'main').splitlines()
+        self.assertIn(receipt['cutoff'], history)
+        self.assertNotIn(newer, history)
         self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'collaboration'), newer)
         content = self.git('--git-dir', str(self.remote), 'show', 'main:' + relative)
         self.assertIn('完成翻译', content); self.assertNotIn('截止之后', content)
         self.assertFalse(any('drafts' in p or p.startswith('scripts/') for p in paths))
+        self.assertNotIn('story/drafts/', self.git('--git-dir', str(self.remote), 'ls-tree', '-r', '--name-only', 'main'))
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'show', 'main:scripts/story_migration.py'), '# trusted code')
         published = self.git('--git-dir', str(self.remote), 'show', 'main:records/adv_main_01.json')
         self.assertNotIn('private', published); self.assertNotIn('draft', published)
         stored = json.loads(self.git('--git-dir', str(self.remote), 'show', 'main:' + frozen.RECEIPT))
         self.assertEqual(stored['cutoff'], receipt['cutoff'])
         self.assertEqual(self.git('status', '--porcelain', cwd=self.main), '')
+    def test_consecutive_merges_retain_original_authors_dates_and_commits(self):
+        initial = self.base
+        for day, name in ((1, 'Translator'), (2, 'Proofreader')):
+            self.identity(self.collab, name, name.lower() + '@example.invalid')
+            self.story('完成翻译 ' + str(day))
+            date = f'2026-10-{day:02d}T12:00:00+08:00'
+            with patch.dict(os.environ, {'GIT_AUTHOR_DATE': date, 'GIT_COMMITTER_DATE': date}):
+                receipt = self.prepare()
+            cutoff = receipt['cutoff']
+            original = self.git('cat-file', 'commit', cutoff, cwd=self.collab)
+            parent = self.base
+            commit, _ = frozen.commit_batch(self.main, self.stage, parent, receipt)
+            self.advance_main()
+            self.assertEqual(self.git('rev-list', '--parents', '-1', 'HEAD', cwd=self.main),
+                             ' '.join((commit, parent, cutoff)))
+            self.assertEqual(self.git('cat-file', 'commit', cutoff, cwd=self.main), original)
+            self.assertEqual(self.git('rev-list', '--first-parent', '--count', initial + '..HEAD', cwd=self.main), str(day))
+            self.assertEqual(frozen.receipt_commit(self.main), commit)
+        self.assertEqual(set(self.git('log', '--no-merges', '--format=%an <%ae>', initial + '..HEAD', cwd=self.main).splitlines()),
+                         {'Translator <translator@example.invalid>', 'Proofreader <proofreader@example.invalid>'})
+    def test_first_merge_after_legacy_single_parent_publication(self):
+        relative = self.story()
+        legacy = self.prepare()
+        data = frozen.data_tree(self.stage)
+        frozen.write_tree(self.main, data)
+        legacy['published_data'] = {p: frozen.hashed(v) for p, v in data.items()}
+        self.write(self.main, frozen.RECEIPT, json.dumps(legacy))
+        self.base = self.commit(self.main)
+        self.git('push', 'origin', 'main', cwd=self.main)
+        legacy_commit = self.base
+        self.assertEqual(frozen.receipt_commit(self.main), legacy_commit)
+        self.assertNotIn(legacy['cutoff'], self.git('rev-list', 'HEAD', cwd=self.main).splitlines())
+        self.story('后续正式稿')
+        receipt = self.prepare()
+        commit, _ = frozen.commit_batch(self.main, self.stage, self.base, receipt)
+        self.advance_main()
+        self.assertEqual(self.git('rev-list', '--parents', '-1', 'HEAD', cwd=self.main),
+                         ' '.join((commit, legacy_commit, receipt['cutoff'])))
+        self.assertIn(legacy['cutoff'], self.git('rev-list', 'HEAD', cwd=self.main).splitlines())
+        self.assertIn('后续正式稿', (self.main / relative).read_text())
+        self.assertEqual(frozen.receipt_commit(self.main), commit)
     def test_machine_baseline_not_overwritten_by_unchanged_old_collaboration(self):
         self.story(); receipt = self.prepare()
         self.write(self.stage, 'notice/zh-Hans.json', '{"new":"machine"}\n')
@@ -227,7 +274,7 @@ class FrozenBatchTests(unittest.TestCase):
             self.assertTrue(release.resume_frozen_publication('owner/repo', self.main, self.root))
         self.assertEqual(publish.call_args.kwargs['target_commit'], commit)
         self.assertEqual(publish.call_args.args[5], receipt['text_version'])
-        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--count', receipt['main_parent'] + '..main'), '1')
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--first-parent', '--count', receipt['main_parent'] + '..main'), '1')
         cached = frozen.cached_assets(self.root, receipt)
         (cached / 'text-update.zip').write_text('tampered')
         with self.assertRaisesRegex(ValueError, 'missing or changed'): frozen.cached_assets(self.root, receipt)
@@ -295,6 +342,20 @@ class FrozenBatchTests(unittest.TestCase):
             frozen.commit_batch(self.main, self.stage, self.base, receipt)
         self.assertIn('fixture publication rejected', str(raised.exception))
         self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main'), self.base)
+
+    def test_lost_push_response_recovers_the_same_merge_commit(self):
+        self.story(); receipt = self.prepare()
+        run = frozen.repository_git
+        def lost_response(repository, *args):
+            result = run(repository, *args)
+            if args[0] == 'push':
+                raise subprocess.CalledProcessError(1, ['git', 'push'], stderr='response lost')
+            return result
+        with patch.object(frozen, 'repository_git', side_effect=lost_response):
+            commit, _ = frozen.commit_batch(self.main, self.stage, self.base, receipt)
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main'), commit)
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-list', '--first-parent', '--count', self.base + '..main'), '1')
+        self.assertEqual(self.git('--git-dir', str(self.remote), 'rev-parse', 'main^2'), receipt['cutoff'])
 
     def test_git_diagnostics_redact_credentials_before_truncation(self):
         with patch.dict(os.environ, {'GH_TOKEN': 'test-private-token'}):
