@@ -1,6 +1,5 @@
 package io.github.dreamgallery.idoly.localify;
 
-import android.animation.ValueAnimator;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -38,13 +37,19 @@ final class PluginDialog {
         private String title, message;
         private View view;
         private String[] items;
+        private String[] itemGroups;
         private DialogInterface.OnClickListener itemAction;
         private final String[] labels = new String[3];
         private final DialogInterface.OnClickListener[] actions = new DialogInterface.OnClickListener[3];
 
-        Builder(Context owner) {
-            dialog = new Dialog(owner, android.R.style.Theme_Material_Light_Dialog_NoActionBar);
-            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        Builder(Context owner) { this(owner, null); }
+        Builder(Context owner, Dialog reuse) {
+            dialog = reuse == null ? new SettingsDialog(owner, true) : reuse;
+            if (reuse == null) dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+            else {
+                dialog.setOnCancelListener(null);dialog.setCancelable(true);
+                dialog.setCanceledOnTouchOutside(true);
+            }
             context = dialog.getContext();
         }
         Builder setTitle(String value) { title = value; return this; }
@@ -53,6 +58,7 @@ final class PluginDialog {
         Builder setItems(String[] values, DialogInterface.OnClickListener action) {
             items = values; itemAction = action; return this;
         }
+        Builder setItemGroups(String[] groups) { itemGroups = groups; return this; }
         Builder setPositiveButton(String label, DialogInterface.OnClickListener action) {
             labels[0] = label; actions[0] = action; return this;
         }
@@ -85,8 +91,18 @@ final class PluginDialog {
                 body.addView(text);
             }
             if (view != null) body.addView(view, new LinearLayout.LayoutParams(-1, -2));
+            String previousGroup = "";
             if (items != null) for (int i = 0; i < items.length; i++) {
                 final int index = i;
+                String group = itemGroups != null && i < itemGroups.length ? itemGroups[i] : "";
+                if (!group.isEmpty() && !group.equals(previousGroup)) {
+                    TextView label = SettingsUiStyle.text(context, group, 14, SettingsUiStyle.MUTED, true);
+                    label.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+                    label.setPadding(SettingsUiStyle.dp(context, 16), SettingsUiStyle.dp(context, 12),
+                        SettingsUiStyle.dp(context, 16), SettingsUiStyle.dp(context, 4));
+                    body.addView(label);
+                }
+                previousGroup = group;
                 SettingsUiStyle.row(body, items[i], null, () -> {
                     try {
                         if (itemAction != null) itemAction.onClick(dialog, index);
@@ -104,7 +120,7 @@ final class PluginDialog {
                 if (labels[slot] == null) continue;
                 LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
                 if (buttons.getChildCount() > 0) params.topMargin = SettingsUiStyle.dp(context, 8);
-                buttons.addView(SettingsUiStyle.button(context, labels[slot], slot == 0, () -> {
+                View button = SettingsUiStyle.button(context, labels[slot], slot == 0, () -> {
                     try {
                         if (actions[slot] != null) actions[slot].onClick(dialog,
                             slot == 0 ? DialogInterface.BUTTON_POSITIVE : slot == 1 ?
@@ -112,44 +128,37 @@ final class PluginDialog {
                     } finally {
                         dialog.dismiss();
                     }
-                }), params);
+                });
+                button.setId(slot == 0 ? android.R.id.button1 : slot == 1 ? android.R.id.button2 : android.R.id.button3);
+                buttons.addView(button, params);
             }
             root.addView(buttons);
             root.setFocusableInTouchMode(true);
+            // Measure the whole panel at its final width, including wrapped
+            // description text, before showing or replacing the window content.
+            // Otherwise a reused loading window first constrains the weighted
+            // scroll area to its old height and resizes after the first frame.
+            int width = Math.min(SettingsUiStyle.dp(context, 480),
+                context.getResources().getDisplayMetrics().widthPixels - SettingsUiStyle.dp(context, 32));
+            int maxHeight = Math.max(1, context.getResources().getDisplayMetrics().heightPixels
+                - SettingsUiStyle.dp(context, 64));
+            root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST));
+            int height = root.getMeasuredHeight();
             dialog.setContentView(root);
-            // Apply before show so the first frame already has its final geometry and dim.
             Window window = dialog.getWindow();
-            if (window != null) {
+            if (window != null) window.setLayout(width, height);
+            if (window != null && !dialog.isShowing()) {
                 window.setWindowAnimations(0);
                 window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-                int width = Math.min(SettingsUiStyle.dp(context, 480),
-                    context.getResources().getDisplayMetrics().widthPixels - SettingsUiStyle.dp(context, 32));
-                window.setLayout(width, -2);
                 window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                     WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
                 window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-                WindowManager.LayoutParams attrs = window.getAttributes();
-                attrs.dimAmount = .38f;
-                window.setAttributes(attrs);
+                window.setDimAmount(0f); // SettingsDialog fades dim together with its content.
             }
-            root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-                @Override public void onViewAttachedToWindow(View view) {
-                    // Animate content only; the window and its modal backdrop stay in place.
-                    // ViewPropertyAnimator follows the system duration scale (including zero).
-                    if (!ValueAnimator.areAnimatorsEnabled()) return;
-                    view.setAlpha(0f);
-                    view.setScaleX(.98f);
-                    view.setScaleY(.98f);
-                    view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150).start();
-                }
-                @Override public void onViewDetachedFromWindow(View view) {
-                    view.animate().cancel();
-                    view.setAlpha(1f);
-                    view.setScaleX(1f);
-                    view.setScaleY(1f);
-                }
-            });
+            ((SettingsDialog) dialog).animateContent(root);
             dialog.setOnShowListener(ignored -> root.requestFocus());
+            if (dialog.isShowing()) root.requestFocus();
             return dialog;
         }
         Dialog show() { Dialog result = create(); result.show(); return result; }

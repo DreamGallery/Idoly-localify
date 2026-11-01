@@ -52,7 +52,8 @@ struct DictionaryCatalog {
 
     static DictionaryCatalog read(const std::string& path, bool reload);
     // A key with source variants never falls through to a context-free value.
-    const std::string* resolveI18n(const std::string& key, const std::string& source) const;
+    const std::string* resolveI18n(const std::string& key, const std::string& source,
+                                  const std::function<std::string()>& objectPath = {}) const;
     // The hierarchy is evaluated lazily, only for a scoped candidate.
     TextDecision resolveText(const std::string& source,
                              const std::function<std::string()>& objectPath = {}) const;

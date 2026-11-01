@@ -14,7 +14,7 @@ class PreviewRuntimeTests(unittest.TestCase):
         work = ROOT / '.agent-local' / 'native-tests'
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=work) as temporary:
-            for name in ('test_inline_hook', 'test_preview_access_policy', 'test_preview_adapters'):
+            for name in ('test_inline_hook', 'test_preview_access_policy', 'test_preview_adapters', 'test_photo_experiments'):
                 with self.subTest(name=name):
                     binary = Path(temporary) / name
                     subprocess.run(['c++', '-std=c++17', '-O1', '-pthread',

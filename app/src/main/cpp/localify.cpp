@@ -26,6 +26,7 @@
 #include "json.hpp"
 #include "runtime/dictionary.h"
 #include "runtime/preview_access.h"
+#include "runtime/photo_experiments.h"
 #include "button_minimum_layout.h"
 #include "tmp_text_signature.h"
 #include "inline_hook.h"
@@ -791,6 +792,17 @@ Il2CppString* translateText(void* textObject, Il2CppString* original) {
     if (resolved) {
         if (!replacesCjk() && translations.catalog().translatedValues.count(source))
             updateFont(textObject, messagePickerPrompt);
+        if (textObject && stringNew && gcHandleGetTarget) {
+            // Font/layout calls can re-enter I18n and grow its map. Reacquire
+            // the tag and copy plain values before any further managed calls.
+            const auto currentTag = resolvedI18nStrings.find(original);
+            if (currentTag != resolvedI18nStrings.end() && gcHandleGetTarget(currentTag->second.weakHandle) == original) {
+                const auto tag = currentTag->second;
+                const auto* contextual = translations.catalog().resolveI18n(tag.key,
+                    tag.source, [&] { return textObjectPath(textObject); });
+                if (contextual && *contextual != source) return stringNew(contextual->c_str());
+            }
+        }
         return original;
     }
     std::function<std::string()> objectPath;
@@ -933,7 +945,7 @@ void refreshTranslatedText(void* self) {
     std::string desired = it->second.source;
     if (!it->second.i18nKey.empty()) {
         const auto* selected = translations.catalog().resolveI18n(
-            it->second.i18nKey, it->second.source);
+            it->second.i18nKey, it->second.source, [&] { return textObjectPath(self); });
         if (selected) desired = *selected;
     }
     auto* replacement = stringNew(desired.c_str());
@@ -993,6 +1005,7 @@ void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* me
 // batch before Unity dispatches willRenderCanvases, so static labels are added
 // to this frame's graphic rebuild queue after a data/profile/capture change.
 void hookCanvasWillRender(void* method) {
+    localify::photo_experiments::processThumbnails();
     collectConstrainedTitleFonts();
     const uint64_t textGeneration = translations.generation();
     const uint64_t fontGeneration = fontProfileGeneration.load(std::memory_order_acquire);
@@ -3707,6 +3720,7 @@ int hookInit(const char* domainName) {
     // Optional previews own their installation/error state. They are not part
     // of dictionary reloads, text matching, or font callback initialization.
     localify::preview_access::install([](const char* name) { return symbol<void*>(name); });
+    localify::photo_experiments::install([](const char* name) { return symbol<void*>(name); });
     return result;
 }
 
@@ -3886,6 +3900,26 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetPreviewAccess(
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeClearPreviewAppearances(JNIEnv*, jclass) {
     localify::preview_access::clearAppearances();
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetPhotoExperiments(JNIEnv* env, jclass) {
+    return env->NewStringUTF(localify::photo_experiments::status().c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetPhotoExperiments(JNIEnv* env, jclass, jstring value) {
+    return localify::photo_experiments::configure(javaString(env, value));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetPhotoThumbnail(JNIEnv* env, jclass, jstring asset) {
+    return env->NewStringUTF(localify::photo_experiments::thumbnail(javaString(env, asset)).c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeCancelPhotoThumbnails(JNIEnv*, jclass) {
+    localify::photo_experiments::cancelThumbnails();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

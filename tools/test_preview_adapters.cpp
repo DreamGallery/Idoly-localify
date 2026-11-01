@@ -3,6 +3,12 @@
 #include <cassert>
 #include <future>
 
+namespace localify::photo_experiments {
+std::string poseMotionSource(const std::string&){return {};}
+void accountChanged() {}
+bool posesEnabled() { return false; }
+}
+
 int __android_log_print(int, const char*, const char*, ...) { return 0; }
 void* shadowhook_hook_func_addr(void*, void*, void**) { assert(false); return nullptr; }
 

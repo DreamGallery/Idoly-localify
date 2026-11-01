@@ -45,6 +45,19 @@ final class SettingsUiStyle {
         return drawable;
     }
 
+    static TextView arrow(Context context, boolean down) {
+        TextView arrow = text(context, "›", 24, MUTED, false);
+        arrow.setGravity(Gravity.CENTER);arrow.setIncludeFontPadding(false);
+        arrow.setRotation(down ? 90 : 0);
+        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        return arrow;
+    }
+
+    static void dismissImmediately(Dialog dialog) {
+        if (dialog instanceof SettingsDialog) ((SettingsDialog) dialog).dismissImmediately();
+        else if (dialog != null) dialog.dismiss();
+    }
+
     static final class Page {
         final FrameLayout root;
         final LinearLayout body;
@@ -61,7 +74,10 @@ final class SettingsUiStyle {
             root.setBackgroundColor(BACKGROUND);
             LinearLayout page = new LinearLayout(context);
             page.setOrientation(LinearLayout.VERTICAL);
+            page.setBackgroundColor(BACKGROUND);
             root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+            // An opaque stage holds the outgoing page while this page slides in.
+            if (dialog instanceof SettingsDialog) ((SettingsDialog) dialog).animatePage(root, page);
             int pad = dp(context, 20);
             LinearLayout header = new LinearLayout(context);
             header.setOrientation(LinearLayout.VERTICAL);
@@ -76,9 +92,11 @@ final class SettingsUiStyle {
             TextView heading = text(context, title, 27, INK, true);
             heading.setPadding(0, dp(context, 14), 0, dp(context, 6));
             header.addView(heading);
-            TextView subtitle = text(context, description, 14, MUTED, false);
-            subtitle.setLineSpacing(dp(context, 3), 1);
-            header.addView(subtitle);
+            if (description != null && !description.isEmpty()) {
+                TextView subtitle = text(context, description, 14, MUTED, false);
+                subtitle.setLineSpacing(dp(context, 3), 1);
+                header.addView(subtitle);
+            }
             page.addView(header);
             ScrollView scroll = new ScrollView(context);
             scroll.setClipToPadding(false);
@@ -140,9 +158,7 @@ final class SettingsUiStyle {
             current.setPadding(dp(context, 10), 0, dp(context, 10), 0);
             row.addView(current, new LinearLayout.LayoutParams(-2, -2));
         }
-        TextView arrow = text(context, "›", 24, MUTED, false);
-        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        row.addView(arrow);
+        row.addView(arrow(context, false), new LinearLayout.LayoutParams(dp(context, 20), dp(context, 24)));
         row.setContentDescription(label + (value == null ? "" : "，当前值 " + value));
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }

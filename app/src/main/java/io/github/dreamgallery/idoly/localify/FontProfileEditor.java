@@ -27,13 +27,16 @@ final class FontProfileEditor {
     private static final int LIMIT = 64 * 1024;
     private static Session pending;
     private static WeakReference<Activity> pendingOwner = new WeakReference<>(null);
-    private static Dialog opened;
+    private static final List<Dialog> opened = new ArrayList<>();
     private static WeakReference<Activity> dialogOwner = new WeakReference<>(null);
 
     private FontProfileEditor() {}
 
     static void close(Activity owner, boolean destroyed) {
-        if (dialogOwner.get() == owner && opened != null) opened.dismiss();
+        if (dialogOwner.get() == owner) {
+            List<Dialog> pages = new ArrayList<>(opened);opened.clear();dialogOwner.clear();
+            for (int i = pages.size() - 1; i >= 0; i--) SettingsUiStyle.dismissImmediately(pages.get(i));
+        }
         if (destroyed && pending != null && pendingOwner.get() == owner) {
             HookEntry.applyFontProfiles(pending.before);
             pending = null;
@@ -55,6 +58,7 @@ final class FontProfileEditor {
     }
 
     static void show(Activity activity, File dataDir) {
+        if (dialogOwner.get() == activity && !opened.isEmpty()) return;
         if (pending != null && (pendingOwner.get() != activity ||
                 !pending.dataDir.getAbsolutePath().equals(dataDir.getAbsolutePath()))) {
             HookEntry.applyFontProfiles(pending.before);
@@ -173,7 +177,7 @@ final class FontProfileEditor {
                 else if (which == indices.size()) save(activity, session);
                 else if (which == indices.size() + 1) reset(activity, session);
                 else rollback(activity, session);
-            }, "返回游戏", () -> { /* Keep an active preview until explicitly saved or cancelled. */ });
+            }, "返回");
     }
 
     private static void fields(Activity activity, Session session, int index) {
@@ -191,46 +195,46 @@ final class FontProfileEditor {
             }
             fullScreenList(activity, profileLabel(profile.getString("id")), labels, values, labels.size(),
                 which -> edit(activity, session, index, keys.get(which)),
-                "返回", () -> reopen(activity, session));
+                "返回");
         } catch (Exception error) {
             Toast.makeText(activity, "参数读取失败", Toast.LENGTH_LONG).show();
         }
     }
 
     private static void showDialog(Activity activity, Dialog dialog) {
-        Dialog previous = opened;
-        dialog.show();
-        if (previous != null) previous.dismiss();
-        opened = dialog;
+        // Parent pages remain visible beneath each child. In particular, opening
+        // a numeric editor must not tear down the full-window parameter list.
+        opened.add(dialog);
         dialogOwner = new WeakReference<>(activity);
         dialog.setOnDismissListener(ignored -> {
-            if (opened == dialog) { opened = null; dialogOwner.clear(); }
+            opened.remove(dialog);if (opened.isEmpty()) dialogOwner.clear();
         });
+        dialog.show();
     }
 
     private interface ListAction { void select(int index); }
 
     private static void fullScreenList(Activity activity, String title, List<String> labels,
                                        List<String> values, int actionStart, ListAction select,
-                                       String backLabel, Runnable back) {
-        Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar);
+                                       String backLabel) {
+        Dialog dialog = new SettingsDialog(activity);
         SettingsUiStyle.Page page = new SettingsUiStyle.Page(dialog, title,
             values == null ? "选择要调整的场景。预览后可返回游戏查看效果。" :
                 "点击参数修改并预览；保存后会在下次启动时自动载入。",
-            backLabel, () -> { back.run(); dialog.dismiss(); });
+            backLabel, dialog::dismiss);
         android.widget.LinearLayout rows = SettingsUiStyle.card(page.body,
             values == null ? "游戏场景" : "当前参数", null);
         for (int i = 0; i < actionStart; i++) {
             final int index = i;
             SettingsUiStyle.row(rows, labels.get(i), values == null ? null : values.get(i),
-                () -> { select.select(index); dialog.dismiss(); });
+                () -> select.select(index));
         }
         if (actionStart < labels.size()) {
             android.widget.LinearLayout actions = SettingsUiStyle.card(page.body, "预览与保存",
                 "保存当前预览，或恢复此前参数。恢复默认会覆盖已保存的设置。");
             for (int i = actionStart; i < labels.size(); i++) {
                 final int index = i;
-                Runnable action = () -> { select.select(index); dialog.dismiss(); };
+                Runnable action = () -> { select.select(index); close(activity, false); };
                 if (i == actionStart) {
                     actions.addView(SettingsUiStyle.button(dialog.getContext(), labels.get(i), true, action),
                         new android.widget.LinearLayout.LayoutParams(-1, -2));
@@ -238,7 +242,6 @@ final class FontProfileEditor {
             }
         }
         dialog.setContentView(page.root);
-        dialog.setOnCancelListener(ignored -> back.run());
         dialog.setCanceledOnTouchOutside(false);
         SettingsUiStyle.configureWindow(dialog);
         showDialog(activity, dialog);
@@ -252,8 +255,7 @@ final class FontProfileEditor {
                 showDialog(activity, new PluginDialog.Builder(activity).setTitle(fieldLabel(key))
                     .setItems(new String[]{Boolean.TRUE.equals(value) ? "开启 · 当前" : "开启",
                         Boolean.FALSE.equals(value) ? "关闭 · 当前" : "关闭"}, (dialog, which) ->
-                        preview(activity, session, index, key, which == 0))
-                    .setOnCancelListener(dialog -> fields(activity, session, index)).create());
+                        preview(activity, session, index, key, which == 0)).create());
                 return;
             }
             EditText input = PluginDialog.input(activity);
@@ -279,10 +281,8 @@ final class FontProfileEditor {
                         preview(activity, session, index, key, edited);
                     } catch (Exception error) {
                         Toast.makeText(activity, "数值或格式无效", Toast.LENGTH_LONG).show();
-                        fields(activity, session, index);
                     }
-                }).setNegativeButton("取消", (dialog, which) -> fields(activity, session, index))
-                .setOnCancelListener(dialog -> fields(activity, session, index)).create());
+                }).setNegativeButton("取消", null).create());
         } catch (Exception error) {
             Toast.makeText(activity, "参数读取失败", Toast.LENGTH_LONG).show();
         }
@@ -302,11 +302,13 @@ final class FontProfileEditor {
                 pendingOwner = new WeakReference<>(activity);
                 Toast.makeText(activity, "预览中；可在游戏内查看效果，再次打开字体菜单保存或取消",
                     Toast.LENGTH_LONG).show();
+                close(activity, false);
+                LocalifySettingsUi.dismiss();
             }
         } catch (Exception error) {
             Toast.makeText(activity, "参数格式无效", Toast.LENGTH_LONG).show();
         }
-        // Leave the game visible so the preview can actually be judged.
+        // Only an accepted preview intentionally leaves settings for the game.
     }
 
     private static void write(File directory, String json) throws Exception {

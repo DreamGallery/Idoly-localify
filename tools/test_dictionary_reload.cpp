@@ -96,6 +96,24 @@ int main(int argc, char** argv) {
     assert(!runtime.catalog().resolveI18n("context", "changed source"));
     assert(*runtime.catalog().resolveI18n("generic", "任意原文") == "通用键译文");
     assert(!runtime.catalog().resolveI18n("unknown", "同じ原文"));
+    // The shared automatic-formation label becomes automatic shooting only on
+    // the two real photo buttons. Changed originals and other controls retain
+    // their I18n source guards, including after a text-resource reload.
+    lookups["i18n"]["common.entrust"] = "自动编队";
+    lookups["i18n"]["photography.dialog.entrust.title"] = "自动拍摄";
+    lookups["i18n_by_source"]["common.entrust"] = {{"おまかせ", "自动编队"}};
+    write(path, lookups);assert(loadDictionary(path, true));
+    const std::string captureTail = "/UIRoot/Screen/Main/CommonFront/InputArea/Normal/EntrustButton/Frame/Text";
+    auto photoButton = [&] { return "PhotographyPresenter" + captureTail; };
+    auto panoramaButton = [&] { return "Root/Photography360LivePresenter(Clone)" + captureTail; };
+    auto teamButton = [&] { return "TeamFormation/EntrustButton/Frame/Text"; };
+    assert(*runtime.catalog().resolveI18n("common.entrust", "おまかせ", photoButton) == "自动拍摄");
+    assert(*runtime.catalog().resolveI18n("common.entrust", "おまかせ", panoramaButton) == "自动拍摄");
+    assert(*runtime.catalog().resolveI18n("common.entrust", "おまかせ", teamButton) == "自动编队");
+    assert(*runtime.catalog().resolveI18n("common.entrust", "おまかせ") == "自动编队");
+    assert(!runtime.catalog().resolveI18n("common.entrust", "changed source", photoButton));
+    assert(runtime.catalog().resolveText("おまかせ", photoButton).text == "自动拍摄");
+    assert(!runtime.catalog().resolveText("おまかせ", teamButton).matched);
     int hierarchyWalks = 0;
     auto unrelated = [&] { ++hierarchyWalks; return std::string("Unrelated/Name"); };
     assert(runtime.catalog().resolveText("同じ原文", unrelated).text == "法务译文");

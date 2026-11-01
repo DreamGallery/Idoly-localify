@@ -19,7 +19,7 @@ final class LocalifySettingsUi {
     private LocalifySettingsUi() {}
 
     static void dismiss() {
-        if (opened != null) opened.dismiss();
+        if (opened != null) SettingsUiStyle.dismissImmediately(opened);
         opened = null;
         updatePanel = null;
     }
@@ -33,7 +33,7 @@ final class LocalifySettingsUi {
                      Runnable hide, Runnable story, Runnable eventStory, Runnable specialStory, boolean capturing,
                      File directory) {
         dismiss();
-        Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar);
+        Dialog dialog = new SettingsDialog(activity);
         SettingsUiStyle.Page page = new SettingsUiStyle.Page(dialog, "本地化设置",
             "管理文本更新、字体排版与采集工具。", "返回游戏", dialog::dismiss);
         LinearLayout translation = SettingsUiStyle.card(page.body, "翻译开关", "切换后重启游戏生效，包含文本、字体和运行时图片替换。");
@@ -60,7 +60,7 @@ final class LocalifySettingsUi {
             translation.addView(SettingsUiStyle.text(dialog.getContext(), "开关已更改，等待重启。", 13, SettingsUiStyle.MUTED, false));
         UpdatePanel updates = new UpdatePanel(page.body, activity, directory, update, address);
         LinearLayout fonts = SettingsUiStyle.card(page.body, "字体与排版", "按场景调整字号、描边和行距，预览后再保存。");
-        SettingsUiStyle.cardRow(fonts, "调整字号与排版", null, () -> { font.run(); dialog.dismiss(); });
+        SettingsUiStyle.cardRow(fonts, "调整字号与排版", null, font);
         // Keep the visible settings page behind modal story tools; closing them returns here.
         LinearLayout stories = SettingsUiStyle.card(page.body, "剧情播放", "选择实际剧情与同类入口，可分别恢复。");
         SettingsUiStyle.cardRow(stories, "卡片剧情替换", null, story);

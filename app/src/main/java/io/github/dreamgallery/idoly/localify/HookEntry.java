@@ -47,6 +47,10 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static native String nativeGetPreviewAccess();
     private static native boolean nativeSetPreviewAccess(int category, boolean enabled);
     private static native void nativeClearPreviewAppearances();
+    private static native String nativeGetPhotoExperiments();
+    private static native boolean nativeSetPhotoExperiments(String json);
+    private static native String nativeGetPhotoThumbnail(String asset);
+    private static native void nativeCancelPhotoThumbnails();
     private static native void nativePauseCaptureWrites(boolean paused);
 
     static String previewAccessStatus() {
@@ -59,6 +63,22 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
 
     static void clearPreviewAppearances() {
         if (NATIVE_READY.get()) nativeClearPreviewAppearances();
+    }
+
+    static String photoExperimentsStatus() {
+        return NATIVE_READY.get() ? nativeGetPhotoExperiments() : "{}";
+    }
+
+    static boolean setPhotoExperiments(String json) {
+        return NATIVE_READY.get() && nativeSetPhotoExperiments(json);
+    }
+
+    static String photoThumbnail(String asset) {
+        return NATIVE_READY.get() ? nativeGetPhotoThumbnail(asset) : "!";
+    }
+
+    static void cancelPhotoThumbnails() {
+        if (NATIVE_READY.get()) nativeCancelPhotoThumbnails();
     }
 
     static void pauseCaptureWrites(boolean paused) {

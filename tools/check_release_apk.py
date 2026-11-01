@@ -12,7 +12,7 @@ from check_runtime_images import read_directory, validate as validate_images
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = 'assets/idoly-localify/'
 PAYLOADS = {'dict.json', 'web-notice.json', 'card-stories.json',
-            'event-stories.json', 'love-stories.json', 'resource-han-rounded.bundle',
+            'event-stories.json', 'love-stories.json', 'character-groups.json', 'resource-han-rounded.bundle',
             'love-rounded.bundle'}
 # Removed ad-hoc probes must not return to a distributed native library.
 DIAGNOSTIC_MARKERS = (b'HomeTalk glyph diagnostic:', b'Message picker geometry:',
@@ -33,6 +33,9 @@ def check(apk, project=ROOT):
         expected = PAYLOADS | {'images/' + name for name in images}
         if payloads != expected or len(names) != len(set(names)):
             raise ValueError('Unexpected or missing module assets')
+        if archive.read(ASSETS + 'character-groups.json') != (
+                project / 'app/src/main/assets/idoly-localify/character-groups.json').read_bytes():
+            raise ValueError('Character group index differs from the reviewed source payload')
         embedded_images = {name: archive.read(ASSETS + 'images/' + name) for name in images}
         validate_images(embedded_images)
         if embedded_images != images:

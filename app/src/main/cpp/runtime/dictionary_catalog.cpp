@@ -154,8 +154,26 @@ std::string translateElapsed(const std::string& source) {
     return {};
 }
 
+namespace {
+bool photoEntrustButton(const std::string& path) {
+    // Both native photo prefabs reuse common.entrust, whose normal meaning is
+    // automatic team formation. Only these capture buttons mean auto shooting.
+    const std::string tail = "/UIRoot/Screen/Main/CommonFront/InputArea/Normal/EntrustButton/Frame/Text";
+    for (const char* root : {"PhotographyPresenter", "Photography360LivePresenter"})
+        for (const char* clone : {"", "(Clone)"}) {
+            const std::string expected = std::string(root) + clone + tail;
+            if (path == expected || (path.size() > expected.size() &&
+                path.compare(path.size() - expected.size() - 1, expected.size() + 1, "/" + expected) == 0)) return true;
+        }
+    return false;
+}
+}
+
 const std::string* DictionaryCatalog::resolveI18n(const std::string& key,
-                                                    const std::string& source) const {
+        const std::string& source, const std::function<std::string()>& objectPath) const {
+    if (key == "common.entrust" && source == "おまかせ" && objectPath && photoEntrustButton(objectPath())) {
+        if (const auto* label = resolveI18n("photography.dialog.entrust.title", "おまかせ撮影")) return label;
+    }
     const auto variants = i18nBySource.find(key);
     if (variants != i18nBySource.end()) {
         const auto found = variants->second.find(source);
@@ -174,6 +192,10 @@ TextDecision DictionaryCatalog::resolveText(
         if (!pathRead) { path = objectPath(); pathRead = true; }
         return path;
     };
+    if (source == "おまかせ" && objectPath && photoEntrustButton(context())) {
+        if (const auto* label = resolveI18n("photography.dialog.entrust.title", "おまかせ撮影"))
+            return {true, *label, true};
+    }
     if (objectPath && source == "を") {
         const auto ticket = text.find("チケット");
         const auto purchase = text.find("購入");

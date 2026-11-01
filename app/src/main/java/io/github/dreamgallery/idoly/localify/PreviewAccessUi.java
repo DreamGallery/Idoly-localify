@@ -14,9 +14,11 @@ final class PreviewAccessUi {
     private PreviewAccessUi() {}
 
     static void show(Activity activity) {
-        Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar);
+        Dialog dialog = new SettingsDialog(activity);
         SettingsUiStyle.Page page = new SettingsUiStyle.Page(dialog, "实验性 · 内容预览",
             "仅当前进程生效；切换后重新打开对应页面。退出游戏后全部关闭。", "返回设置", dialog::dismiss);
+        LinearLayout photography = SettingsUiStyle.card(page.body, "拍摄与模型", "初始拍摄数据、模型替换、联动 MV 与场景。");
+        photography.addView(SettingsUiStyle.button(dialog.getContext(), "拍摄与模型设置", false, () -> PhotoExperimentsUi.show(activity)));
         LinearLayout options = SettingsUiStyle.card(page.body, "预览类别",
             "扩展列表不改变账号持有数据。正式拍摄会向服务器提交所选内容；资源由游戏按需联网下载。");
         try {

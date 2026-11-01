@@ -1,4 +1,5 @@
 #include "preview_access.h"
+#include "photo_experiments.h"
 #include "preview_access_policy.h"
 #include "appearance_overrides.h"
 #include "profile_decoration_state.h"
@@ -305,9 +306,10 @@ void* snapshot(CategoryState& state) {
 void* view(CategoryState& state, void* original, bool scoped) {
     if (!original) return original;
     const bool inWardrobe = wardrobeReady.load() && (wardrobeScope & state.bit);
+    const bool collaborationPose = state.bit == Poses && localify::photo_experiments::posesEnabled();
     if (poseConstructionScope & Poses) {
-        if (state.bit != Poses || !policy.allows(Poses, 0, false)) return original;
-    } else if (!inWardrobe && (!policy.allows(state.bit, scope, scoped) || !inPhotographyWindow())) return original;
+        if (state.bit != Poses || (!policy.allows(Poses, 0, false) && !collaborationPose)) return original;
+    } else if (!inWardrobe && ((!policy.allows(state.bit, scope, scoped) && !collaborationPose) || !inPhotographyWindow())) return original;
     std::lock_guard<std::recursive_mutex> lock(mutex);
     try {
         void* result = snapshot(state);
@@ -349,8 +351,16 @@ bool hasOrnaments(void* self, void* character, const Method* method) {
     // synchronous list-building scopes below are entered.
     return originalHasOrnaments(view(categories[1], self, false), character, method);
 }
+std::string idText(void* value);
 void* readPoses(void* self, void* character, bool checkReleased, const Method* method) {
     void* source = view(categories[2], self, false);
+    if(source!=self && localify::photo_experiments::posesEnabled()) {
+        auto fallback=localify::photo_experiments::poseMotionSource(idText(character));
+        if(!fallback.empty()) {
+            Root id(api.newString(fallback.c_str()));
+            return originalPoses(source,id.get(),true,method);
+        }
+    }
     return originalPoses(source, character, source != self || checkReleased, method);
 }
 void createPoseScene(void* self, void* expression, bool preview, const Method* method) {
@@ -882,6 +892,7 @@ void initializeUser(void* self, void* response, const Method* method) {
         clearDecorationOverride();
     }
     originalUserInitialization(self, response, method);
+    localify::photo_experiments::accountChanged();
 }
 
 bool layout(void* klass, size_t size, std::initializer_list<std::pair<const char*, size_t>> fields) {

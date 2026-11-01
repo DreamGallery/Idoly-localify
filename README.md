@@ -2,15 +2,15 @@
 
 《IDOLY PRIDE／偶像荣耀》日服 Android 简体中文本地化插件。提供界面与剧情文本替换、MasterDB 本地化、公告翻译、运行时字体和图片替换，以及文本在线更新。
 
-## 使用与构建
+## 安装与使用
 
 - **LSPosed／Vector**：在兼容的 root 设备启用模块，作用域仅选择游戏；使用原版游戏 APK。
 - **LSPatch**：将模块嵌入游戏安装包。字体与汉化图片由模块在运行时加载，保留游戏原始资源。
 - 通用字体为 Noto Sans CJK SC SemiBold，若恋对白和按钮采用 Resource Han Rounded SC Bold；指定数字、价格等控件保留原字体。
-- 详细设置可关闭翻译、删除本地译文或清理采集文件。翻译开关在重启游戏后生效。
-- 「额外功能」提供按类别开启的[实验性内容预览](docs/content-preview.md)：服装、发型／发饰、姿势和名片装饰；不改变账号持有数据，仅当前进程生效。
+- 悬浮窗中的详细设置可更新文本、调整字体、替换剧情，也可关闭翻译或清理本地文件。翻译开关在重启游戏后生效。
+- 「额外功能」提供[实验性内容预览与拍摄](docs/content-preview.md)：临时试用外观、替换 3D 角色模型，以及查看部分限时和联动拍摄内容。不增加账号持有物品；正式保存照片前请阅读功能说明。
 
-当前构建目标为 Android ARM64，也支持 Windows MuMu Android 12 的 ARM64 转译环境（LSPatch）。构建插件需要 Android SDK、NDK、JDK 17+、Python 3.12+；使用 LSPatch 修补游戏需要 JDK 21+。具体依赖和命令见[构建说明](docs/build.md)。
+当前构建目标为 Android ARM64；Windows MuMu Android 12 可通过 ARM64 转译使用 LSPatch 版。其他模拟器取决于其兼容性。开发依赖和编译命令见[构建说明](docs/build.md)。
 
 ## 项目结构
 

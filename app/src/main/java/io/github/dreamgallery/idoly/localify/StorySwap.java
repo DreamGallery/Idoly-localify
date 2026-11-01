@@ -8,6 +8,7 @@ import android.view.WindowManager;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -26,7 +27,6 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Independent, same-format runtime aliases for installed story scripts. */
 final class StorySwap {
@@ -84,32 +84,56 @@ final class StorySwap {
     }
 
     private void showMenu(Activity activity, File dataDir) {
-        background(activity, dataDir, "正在读取剧情目录…", true, () -> {
-            List<StoryItem> available = loadAvailable(activity, dataDir);
-            return new CatalogSelection(available, readState(dataDir, available));
-        }, selection -> showMenu(activity, dataDir, selection.available, selection.active));
+        // The menu needs only the small saved selection. Do not make its first
+        // frame wait for thousands of script checks or replace a loading panel.
+        try {
+            JSONObject active = readStateValue(dataDir);
+            CatalogSelection[] selection = {null};
+            Dialog menu = menu(activity, dataDir, active, () -> {
+                if (selection[0] != null)
+                    pick(activity, dataDir, selection[0].available, "选择想看的剧情", null);
+            });
+            Button choose = menu.findViewById(android.R.id.button1);
+            choose.setText("正在读取目录…");choose.setEnabled(false);
+            menu.show();
+            Thread reader = new Thread(() -> {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+                CatalogSelection result = null;Exception failure = null;
+                try {
+                    List<StoryItem> available = loadAvailable(activity, dataDir);
+                    readState(dataDir, available);
+                    result = new CatalogSelection(available);
+                } catch (Exception error) { failure = error; }
+                final CatalogSelection loaded = result;final Exception error = failure;
+                activity.runOnUiThread(() -> {
+                    if (activity.isFinishing() || activity.isDestroyed()) {
+                        SettingsUiStyle.dismissImmediately(menu);return;
+                    }
+                    if (!menu.isShowing() || ((SettingsDialog) menu).isClosing()) return;
+                    if (error != null) { showRecovery(activity, dataDir, error, menu);return; }
+                    selection[0] = loaded;
+                    choose.setText("设置替换");choose.setEnabled(true);
+                });
+            }, "IdolyStoryCatalog");
+            menu.setOnDismissListener(ignored -> reader.interrupt());
+            reader.start();
+        } catch (Exception error) { showRecovery(activity, dataDir, error, null); }
     }
 
     private final class CatalogSelection {
         final List<StoryItem> available;
-        final JSONObject active;
-        CatalogSelection(List<StoryItem> available, JSONObject active) {
+        CatalogSelection(List<StoryItem> available) {
             this.available = available;
-            this.active = active;
         }
     }
     private interface Work<T> { T run() throws Exception; }
-    private interface Ready<T> { void run(T value) throws Exception; }
+    private interface Ready<T> { Dialog run(T value, Dialog progress) throws Exception; }
 
-    private <T> void background(Activity activity, File dataDir, String message,
-                                boolean reading, Work<T> work, Ready<T> ready) {
-        AtomicBoolean canceled = new AtomicBoolean();
+    private <T> void background(Activity activity, String message, Work<T> work, Ready<T> ready) {
         PluginDialog.Builder builder = new PluginDialog.Builder(activity)
             .setTitle(category + "剧情替换").setMessage(message);
-        if (reading) builder.setNegativeButton("取消", (dialog, which) -> canceled.set(true))
-            .setOnCancelListener(dialog -> canceled.set(true));
         Dialog progress = builder.create();
-        progress.setCancelable(reading);
+        progress.setCancelable(false);
         progress.setCanceledOnTouchOutside(false);
         progress.show();
         new Thread(() -> {
@@ -120,46 +144,51 @@ final class StorySwap {
             final T result = value;
             final Exception error = failure;
             activity.runOnUiThread(() -> {
-                if (activity.isFinishing() || activity.isDestroyed()) return;
-                progress.dismiss();
-                if (canceled.get()) return;
+                if (activity.isFinishing() || activity.isDestroyed()) { SettingsUiStyle.dismissImmediately(progress);return; }
+                if (!progress.isShowing() || ((SettingsDialog) progress).isClosing()) {
+                    progress.dismiss();return;
+                }
+                Dialog next = null;
                 try {
                     if (error != null) throw error;
-                    ready.run(result);
+                    next = ready.run(result, progress);
                 } catch (Exception problem) {
-                    if (reading) showRecovery(activity, dataDir, problem);
-                    else showError(activity, problem);
+                    next = showError(activity, problem, progress);
+                } finally {
+                    if (next != progress) progress.dismiss();
                 }
             });
         }, "IdolyStoryCatalog").start();
     }
 
-    private void showMenu(Activity activity, File dataDir, List<StoryItem> available,
-                          JSONObject active) {
-        try {
-            String message = active == null ? (kind.equals("love") ? "选择想看的特殊活动剧情，再选择活动期间已开放的剧情入口。" :
-                "选择想看的" + category + "剧情，再选择用于播放的" + category + "剧情入口。") :
-                "当前入口：" + labelFor(available, active.getString("entry")) + "\n播放：" +
-                labelFor(available, active.getString("source")) +
-                "\n下次打开该入口时生效。";
-            if (kind.equals("love")) message += "\n选项组数、每组选项数须一致。\n进度与条件分支仍由原入口决定。";
-            PluginDialog.Builder menu = new PluginDialog.Builder(activity)
-                .setTitle((kind.equals("love") ? "实验性 · " : "") + category + "剧情替换").setMessage(message)
-                .setPositiveButton("设置替换", (dialog, which) ->
-                    pick(activity, dataDir, available, "选择想看的剧情", null));
-            if (active != null) menu.setNeutralButton("一键恢复", (dialog, which) -> {
-                try {
-                    clearState(dataDir);
-                    Toast.makeText(activity, "已恢复入口原有剧情；下次打开时生效", Toast.LENGTH_LONG).show();
-                } catch (Exception error) { showError(activity, error); }
-            });
-            menu.setNegativeButton("关闭", null).show();
-        } catch (Exception error) { showRecovery(activity, dataDir, error); }
+    private Dialog menu(Activity activity, File dataDir, JSONObject active, Runnable choose) throws Exception {
+        String message = active == null ? (kind.equals("love") ? "选择想看的特殊活动剧情，再选择活动期间已开放的剧情入口。" :
+            "选择想看的" + category + "剧情，再选择用于播放的" + category + "剧情入口。") :
+            "当前入口：" + savedLabel(active, "entry") + "\n播放：" + savedLabel(active, "source") +
+            "\n下次打开该入口时生效。";
+        if (kind.equals("love")) message += "\n选项组数、每组选项数须一致。\n进度与条件分支仍由原入口决定。";
+        PluginDialog.Builder menu = new PluginDialog.Builder(activity)
+            .setTitle((kind.equals("love") ? "实验性 · " : "") + category + "剧情替换").setMessage(message)
+            .setPositiveButton("设置替换", (dialog, which) ->
+                choose.run());
+        if (active != null) menu.setNeutralButton("一键恢复", (dialog, which) -> {
+            try {
+                clearState(dataDir);
+                Toast.makeText(activity, "已恢复入口原有剧情；下次打开时生效", Toast.LENGTH_LONG).show();
+            } catch (Exception error) { showError(activity, error); }
+        });
+        return menu.setNegativeButton("关闭", null).create();
+    }
+
+    private String savedLabel(JSONObject state, String prefix) throws Exception {
+        if (state.getInt("schema_version") == 1) return state.getString(prefix);
+        return "第" + state.getInt(prefix + "_episode") + "话 · " +
+            state.getString(prefix + "_title").replace("\\n", " ").replace('\n', ' ');
     }
 
     private void pick(Activity activity, File dataDir, List<StoryItem> available,
                              String title, StoryItem source) {
-        Dialog dialog = new Dialog(activity, android.R.style.Theme_Material_Light_NoActionBar);
+        Dialog dialog = new SettingsDialog(activity);
         android.content.Context context = dialog.getContext();
         Runnable back = () -> {
             if (source == null) showMenu(activity, dataDir);
@@ -197,7 +226,9 @@ final class StorySwap {
         page.body.addView(filters);
         // null means all characters; an empty ID means the explicit unclassified group.
         String[] selectedCharacter = {null};
-        java.util.Map<String, String> characters = new java.util.TreeMap<>();
+        CharacterGroups groups = CharacterGroups.load(activity);
+        java.util.Map<String, String> characters = kind.equals("card") ?
+            new java.util.TreeMap<>(groups::compare) : new java.util.TreeMap<>();
         for (StoryItem item : available) {
             if (source == null || !item.file.equals(source.file))
                 characters.put(item.characterId, item.characterName);
@@ -246,14 +277,18 @@ final class StorySwap {
         characterFilter.setOnClickListener(ignored -> {
             List<String> ids = new ArrayList<>();
             List<String> labels = new ArrayList<>();
+            List<String> headings = new ArrayList<>();
             ids.add(null);
             labels.add(selectedCharacter[0] == null ? "全部 · 当前" : "全部");
+            headings.add("");
             for (java.util.Map.Entry<String, String> character : characters.entrySet()) {
                 ids.add(character.getKey());
                 labels.add(character.getValue() + (character.getKey().equals(selectedCharacter[0]) ?
                     " · 当前" : ""));
+                headings.add(kind.equals("card") ? groups.name(character.getKey(), "其他角色") : "");
             }
             new PluginDialog.Builder(activity).setTitle(kind.equals("card") ? "按角色筛选" : "按活动筛选")
+                .setItemGroups(headings.toArray(new String[0]))
                 .setItems(labels.toArray(new String[0]), (choice, index) -> {
                     selectedCharacter[0] = ids.get(index);
                     characterFilter.setText((kind.equals("card") ? "角色：" : "活动：") + (index == 0 ? "全部" :
@@ -300,7 +335,7 @@ final class StorySwap {
                 "\n\n下次进入时生效，可随时恢复。" +
                 (kind.equals("love") ? "\n实验性：选项组数、每组选项数须一致。\n仅限活动开放期间，进度与条件分支仍由原入口决定。" : ""))
             .setPositiveButton("启用替换", (dialog, which) ->
-                background(activity, dataDir, "正在校验并保存替换设置…", false, () -> {
+                background(activity, "正在校验并保存替换设置…", () -> {
                     List<StoryItem> current = loadAvailable(activity, dataDir);
                     readState(dataDir, current);
                     StoryItem currentEntry = itemFor(current, entry.file);
@@ -311,7 +346,9 @@ final class StorySwap {
                         throw new Exception("两段剧情的选项结构不同，请选择其他入口");
                     writeState(dataDir, currentEntry, currentSource);
                     return null;
-                }, ignored -> Toast.makeText(activity, "替换已保存；下次打开入口时生效", Toast.LENGTH_LONG).show()))
+                }, (ignored, progress) -> {
+                    Toast.makeText(activity, "替换已保存；下次打开入口时生效", Toast.LENGTH_LONG).show();return null;
+                }))
             .setNegativeButton("取消", null).show();
     }
 
@@ -321,6 +358,7 @@ final class StorySwap {
             name -> HookEntry.readBuiltInAsset(context, name));
         List<StoryItem> result = new ArrayList<>();
         for (int i = 0; i < rows.length(); i++) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
             StoryItem item = new StoryItem(rows.getJSONObject(i));
             if (installed(dataDir, item.file)) {
                 if (kind.equals("love")) item.choiceCounts = choiceShape(dataDir, item.file);
@@ -328,10 +366,31 @@ final class StorySwap {
             }
         }
         if (result.isEmpty()) throw new Exception("未找到已安装的" + category + "剧情译文");
+        if (kind.equals("card")) {
+            CharacterGroups groups = CharacterGroups.load(context);
+            result.sort((left, right) -> groups.compare(left.characterId, right.characterId));
+        }
         return result;
     }
 
     private JSONObject readState(File dataDir, List<StoryItem> available) throws Exception {
+        JSONObject value = readStateValue(dataDir);
+        if (value == null) return null;
+        String entry = value.getString("entry"), source = value.getString("source");
+        if (!contains(available, entry) || !contains(available, source))
+            throw new Exception("现有替换设置与剧情目录或本地资源不一致，未作修改");
+        if (value.getInt("schema_version") == 2) {
+            for (StoryItem story : available) {
+                String prefix = story.file.equals(entry) ? "entry" : story.file.equals(source) ? "source" : null;
+                if (prefix != null && (!story.rawTitle.equals(value.getString(prefix + "_title")) ||
+                        story.episode != value.getInt(prefix + "_episode")))
+                    throw new Exception("现有替换标题与剧情目录不一致，请恢复后重新设置");
+            }
+        }
+        return value;
+    }
+
+    private JSONObject readStateValue(File dataDir) throws Exception {
         File file = new File(dataDir, STATE);
         if (!file.exists()) return null;
         if (!file.isFile() || file.length() < 1 || file.length() > 4096)
@@ -340,15 +399,14 @@ final class StorySwap {
         String entry = value.getString("entry"), source = value.getString("source");
         int version = value.getInt("schema_version");
         if (!((version == 1 && value.length() == 3) || (version == 2 && value.length() == 7)) ||
-            !validName(entry) || !validName(source) || entry.equals(source) ||
-            !contains(available, entry) || !contains(available, source))
+            !validName(entry) || !validName(source) || entry.equals(source))
             throw new Exception("现有替换设置与剧情目录或本地资源不一致，未作修改");
         if (version == 2) {
-            for (StoryItem story : available) {
-                String prefix = story.file.equals(entry) ? "entry" : story.file.equals(source) ? "source" : null;
-                if (prefix != null && (!story.rawTitle.equals(value.getString(prefix + "_title")) ||
-                        story.episode != value.getInt(prefix + "_episode")))
-                    throw new Exception("现有替换标题与剧情目录不一致，请恢复后重新设置");
+            for (String prefix : new String[]{"entry", "source"}) {
+                String title = value.getString(prefix + "_title");
+                int episode = value.getInt(prefix + "_episode");
+                if (episode < 1 || episode > 20 || title.indexOf('\0') >= 0)
+                    throw new Exception("现有替换标题无效，请恢复后重新设置");
             }
         }
         return value;
@@ -364,10 +422,6 @@ final class StorySwap {
     private StoryItem itemFor(List<StoryItem> stories, String file) throws Exception {
         for (StoryItem item : stories) if (item.file.equals(file)) return item;
         throw new Exception("剧情目录已更新，请重新选择剧情");
-    }
-    private String labelFor(List<StoryItem> stories, String file) {
-        for (StoryItem story : stories) if (story.file.equals(file)) return story.label();
-        return file;
     }
     private boolean installed(File dataDir, String file) {
         if (!validName(file)) return false;
@@ -423,9 +477,9 @@ final class StorySwap {
         if (!Files.deleteIfExists(new File(dataDir, STATE).toPath()))
             throw new Exception("替换设置已不存在");
     }
-    private void showRecovery(Activity activity, File dataDir, Exception error) {
+    private Dialog showRecovery(Activity activity, File dataDir, Exception error, Dialog progress) {
         File state = new File(dataDir, STATE);
-        PluginDialog.Builder dialog = new PluginDialog.Builder(activity)
+        PluginDialog.Builder dialog = new PluginDialog.Builder(activity, progress)
             .setTitle("无法读取剧情替换")
             .setMessage((error.getMessage() == null ? "剧情目录或本地资源无效。" : error.getMessage()) +
                 (state.exists() ? "\n可清除替换设置以恢复入口原有剧情。" : ""))
@@ -436,10 +490,13 @@ final class StorySwap {
                 Toast.makeText(activity, "已清除替换设置；下次打开入口时生效", Toast.LENGTH_LONG).show();
             } catch (Exception failure) { showError(activity, failure); }
         });
-        dialog.show();
+        return dialog.show();
     }
     private void showError(Activity activity, Exception error) {
-        new PluginDialog.Builder(activity).setTitle("无法设置剧情替换")
+        showError(activity, error, null);
+    }
+    private Dialog showError(Activity activity, Exception error, Dialog progress) {
+        return new PluginDialog.Builder(activity, progress).setTitle("无法设置剧情替换")
             .setMessage(error.getMessage() == null ? "请检查本地剧情文件。" : error.getMessage())
             .setPositiveButton("确定", null).show();
     }
