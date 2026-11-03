@@ -27,6 +27,10 @@
 #include "runtime/dictionary.h"
 #include "runtime/preview_access.h"
 #include "runtime/photo_experiments.h"
+#include "runtime/graphics_settings.h"
+#include "runtime/frame_dispatch.h"
+#include "runtime/account_snapshot.h"
+#include "runtime/server_route.h"
 #include "button_minimum_layout.h"
 #include "tmp_text_signature.h"
 #include "inline_hook.h"
@@ -283,7 +287,6 @@ using OctoSetupFn = bool (*)(void*, bool, void*);
 using ResourceLoadFn = void (*)(void*, Il2CppString*, void*, void*, void*);
 using AssetLoadFn = void (*)(void*, Il2CppString*, void*, void*, void*);
 using GetBlobFn = void (*)(void*, int32_t, void**, int32_t*, void*);
-using CanvasWillRenderFn = void (*)(void*);
 using SetArraySizesFn = int32_t (*)(void*, void*, void*);
 using GetCharacterFn = void* (*)(uint32_t, void*, bool, int32_t, int32_t, bool*, void*);
 GetCharacterFn origGetCharacter = nullptr;
@@ -315,7 +318,6 @@ OctoSetupFn origOctoSetup = nullptr;
 ResourceLoadFn origResourceLoad = nullptr;
 AssetLoadFn origAssetLoad = nullptr;
 GetBlobFn origGetBlob = nullptr;
-CanvasWillRenderFn origCanvasWillRender = nullptr;
 MasterBlobMatcher masterBlobPatches;
 std::atomic<uint32_t> seenMasterBlobs{0};
 std::atomic<uint32_t> matchedMasterBlobs{0};
@@ -1004,8 +1006,7 @@ void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* me
 // OnPreRenderCanvas is called only for dirty UI elements. Schedule a bounded
 // batch before Unity dispatches willRenderCanvases, so static labels are added
 // to this frame's graphic rebuild queue after a data/profile/capture change.
-void hookCanvasWillRender(void* method) {
-    localify::photo_experiments::processThumbnails();
+void refreshCanvasText() {
     collectConstrainedTitleFonts();
     const uint64_t textGeneration = translations.generation();
     const uint64_t fontGeneration = fontProfileGeneration.load(std::memory_order_acquire);
@@ -1063,7 +1064,6 @@ void hookCanvasWillRender(void* method) {
             canvasDirtyCursor = 0;
         }
     }
-    if (origCanvasWillRender) origCanvasWillRender(method);
 }
 
 // Captured labels are fitted before mesh generation, after game layouts.
@@ -3614,21 +3614,7 @@ void installTextHooks() {
     installed += installMethod("Qua.UI.FitToChild.SetLayout",
         methodPointer("quaunity-ui.Runtime.dll", "Qua.UI", "FitToChild", "SetLayout", 1),
         reinterpret_cast<void*>(hookActivityFitToChildLayout), origFitToChildLayout);
-    const auto* canvasWillRender = methodInfo("UnityEngine.UIModule.dll", "UnityEngine",
-        "Canvas", "SendWillRenderCanvases", 0);
-    bool validCanvasWillRender = false;
-    if (canvasWillRender && canvasWillRender->methodPointer && methodGetFlags &&
-        methodGetParamCount && methodGetReturnType && typeGetName && il2cppFree) {
-        uint32_t implementationFlags = 0;
-        const uint32_t flags = methodGetFlags(canvasWillRender, &implementationFlags);
-        char* resultType = typeGetName(methodGetReturnType(canvasWillRender));
-        validCanvasWillRender = (flags & 0x0010u) && methodGetParamCount(canvasWillRender) == 0 &&
-            resultType && std::strcmp(resultType, "System.Void") == 0;
-        if (resultType) il2cppFree(resultType);
-    }
-    installed += installMethod("UnityEngine.Canvas.SendWillRenderCanvases",
-        validCanvasWillRender ? canvasWillRender->methodPointer : nullptr,
-        reinterpret_cast<void*>(hookCanvasWillRender), origCanvasWillRender);
+    localify::frames::subscribe("localized text", refreshCanvasText);
     if (const auto* setter = tmpStringSetter(1))
         installed += installMethod("TMP_Text.SetText(string)", setter->methodPointer,
             reinterpret_cast<void*>(hookTmpSetTextOne), origTmpSetTextOne);
@@ -3709,6 +3695,8 @@ void installTextHooks() {
 
 int hookInit(const char* domainName) {
     int result = origInit(domainName);
+    localify::server_route::install([](const char* name) { return symbol<void*>(name); });
+    localify::frames::install([](const char* name) { return symbol<void*>(name); });
     // Overlay visibility and temporary previews do not depend on localization.
     installStoryVisibilityHooks();
     if (localizationEnabledForProcess.load()) {
@@ -3721,6 +3709,9 @@ int hookInit(const char* domainName) {
     // of dictionary reloads, text matching, or font callback initialization.
     localify::preview_access::install([](const char* name) { return symbol<void*>(name); });
     localify::photo_experiments::install([](const char* name) { return symbol<void*>(name); });
+    localify::graphics::install([](const char* name) { return symbol<void*>(name); });
+    localify::frames::subscribe("photo thumbnails", localify::photo_experiments::processThumbnails);
+    localify::account_snapshot::install([](const char* name) { return symbol<void*>(name); });
     return result;
 }
 
@@ -3907,6 +3898,16 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetPhotoExperiments(J
     return env->NewStringUTF(localify::photo_experiments::status().c_str());
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeGetGraphicsSettings(JNIEnv* env, jclass) {
+    return env->NewStringUTF(localify::graphics::status().c_str());
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetGraphicsSettings(JNIEnv* env, jclass, jstring value) {
+    return localify::graphics::configure(javaString(env, value));
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeSetPhotoExperiments(JNIEnv* env, jclass, jstring value) {
     return localify::photo_experiments::configure(javaString(env, value));
@@ -4006,4 +4007,38 @@ Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeInstall(
         return JNI_FALSE;
     }
     return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeRequestAccountSnapshot(JNIEnv*,jclass,jboolean photos) {
+    return localify::account_snapshot::request(photos);
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeConfigureServer(JNIEnv* env,jclass,jstring value) {
+    if(!value || env->GetStringUTFLength(value)>40000)return false;
+    return localify::server_route::configure(javaString(env,value));
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeValidateServer(JNIEnv* env,jclass,jstring value) {
+    if(!value || env->GetStringUTFLength(value)>40000)return false;
+    return localify::server_route::validate(javaString(env,value));
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeServerStatus(JNIEnv* env,jclass) {
+    return env->NewStringUTF(localify::server_route::status().c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeAccountSnapshotStatus(JNIEnv* env,jclass) {
+    return env->NewStringUTF(localify::account_snapshot::status().c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeAccountSnapshotDocument(JNIEnv* env,jclass) {
+    return env->NewStringUTF(localify::account_snapshot::document().c_str());
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_io_github_dreamgallery_idoly_localify_HookEntry_nativeAccountSnapshotProtobuf(JNIEnv* env,jclass) {
+    const auto bytes=localify::account_snapshot::protobuf();
+    auto result=env->NewByteArray(static_cast<jsize>(bytes.size()));
+    if(result && !bytes.empty())env->SetByteArrayRegion(result,0,bytes.size(),reinterpret_cast<const jbyte*>(bytes.data()));
+    return result;
 }

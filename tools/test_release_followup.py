@@ -182,6 +182,7 @@ class DispatchAndOutputsTests(unittest.TestCase):
             output = Path(temporary) / 'github-output'
             (Path(temporary) / 'manifest.json').write_text('{}')
             with patch.dict(release.os.environ, {'GITHUB_OUTPUT': str(output)}), \
+                    patch.object(release, 'publish_latest_plugin', return_value={}), \
                     patch.object(release, 'publish', side_effect=[{'tag': 'v0.2.5', 'published': True},
                                                                RuntimeError('text failed')]):
                 with self.assertRaisesRegex(RuntimeError, 'text failed'):

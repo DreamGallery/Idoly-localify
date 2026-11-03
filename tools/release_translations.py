@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Trusted scheduled release driver. Public collaboration files are data only.
 
-Run from a reviewed, pinned private source checkout. --dry-run prepares and
+Run from a reviewed source checkout. --dry-run prepares and
 validates all assets but does not upload, publish, or write Git history.
 """
 from __future__ import annotations
@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import urlsplit
+
+from release_plugin import DEFAULT_REPOSITORY as PLUGIN_REPOSITORY, plugin_auth, publish_latest_plugin
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,16 +55,16 @@ def publish(repo, tag, assets, latest, dry_run, *, notes=None, target_commit=Non
     if target_commit is not None:
         from release_followup import GitHub
         if not re.fullmatch(r'[0-9a-f]{40,64}', target_commit):
-            raise ValueError('Text publication requires an exact main commit')
+            raise ValueError('Publication requires an exact source commit')
         client = GitHub(repo)
         tagged_ref = client.request('GET', f'git/ref/tags/{tag}', missing_ok=True)
         tagged = client.request('GET', f'commits/{tag}') if tagged_ref else None
         if tagged is not None and tagged.get('sha') != target_commit:
-            raise ValueError('Existing text tag points to a different main commit')
+            raise ValueError('Existing release tag points to a different source commit')
     existing = release_exists(repo, tag)
     missing = list(assets)
     if existing and target_commit and existing.get('draft') and existing.get('target_commitish') != target_commit:
-        raise ValueError('Existing text draft targets a different main commit')
+        raise ValueError('Existing release draft targets a different source commit')
     if existing:
         remote_names = {item['name'] for item in existing.get('assets', [])}
         expected_names = {asset.name for asset in assets}
@@ -122,14 +124,15 @@ def release_output(key, result, dry_run):
         stream.write(f'{key}={tag}\n')
 
 
-def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run, *, target_commit=None):
+def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dry_run, *, target_commit=None,
+                         plugin_repository=PLUGIN_REPOSITORY, plugin_commit=None):
     from release_latest import publish_latest
     from story_catalog_payloads import release_catalog_assets
     results = []
-    if apk:
-        result = publish(repo, 'v' + version, [apk], False, dry_run, notes=apk_notes)
+    if plugin_repository:
+        result = publish_plugin_update(plugin_repository, version, apk, apk_notes, dry_run,
+                                       target_commit=plugin_commit)
         results.append(result)
-        release_output('plugin_tag', result, dry_run)
     result = publish(repo, 'text-' + text_version,
                      [output / 'text-update.zip', output / 'manifest.json'] +
                      release_catalog_assets(output, repo, 'text-' + text_version),
@@ -141,16 +144,19 @@ def publish_built_assets(repo, version, apk, apk_notes, output, text_version, dr
     return results
 
 
-def publish_plugin_update(repo, version, apk, apk_notes, dry_run):
-    from release_latest import refresh_latest_notes
-    if apk:
-        result = publish(repo, 'v' + version, [apk], False, dry_run, notes=apk_notes)
-        release_output('plugin_tag', result, dry_run)
-    # Also refresh on retry, when the APK already exists and was not rebuilt.
-    return refresh_latest_notes(repo, dry_run)
+def publish_plugin_update(repo, version, apk, apk_notes, dry_run, *, target_commit=None):
+    if dry_run:
+        return {'tag': 'v' + version, 'published': False}
+    with plugin_auth():
+        if apk:
+            result = publish(repo, 'v' + version, [apk], False, False, notes=apk_notes,
+                             target_commit=target_commit)
+            release_output('plugin_tag', result, False)
+        # Retry repairs latest from the verified version, without rebuilding it.
+        return publish_latest_plugin(repo, 'v' + version, apk=apk)
 
 
-def resume_frozen_publication(repo, repository, work):
+def resume_frozen_publication(repo, repository, work, *, plugin_repository=PLUGIN_REPOSITORY):
     """A committed batch is resumed before fetching sources or translating anew."""
     from frozen_release import load_receipt, receipt_commit, cached_assets
     from story_catalog_payloads import CATALOG_NAMES
@@ -178,7 +184,8 @@ def resume_frozen_publication(repo, repository, work):
     notes = (output / 'plugin-notes.txt').read_text() if apk else None
     commit = receipt_commit(repository)
     results = publish_built_assets(repo, receipt['plugin_version'], apk, notes,
-        output, receipt['text_version'], False, target_commit=commit)
+        output, receipt['text_version'], False, target_commit=commit,
+        plugin_repository=plugin_repository, plugin_commit=receipt.get('plugin_commit'))
     print(json.dumps({'schema_version': 1, 'resumed': True, 'cutoff': receipt['cutoff'],
                       'source_commit': commit, 'releases': results}))
     return True
@@ -376,6 +383,7 @@ def main():
                  'solis-dir', 'notice-account', 'font-bundle', 'collaboration-dir'):
         parser.add_argument('--' + flag, type=Path, default=config.get(flag.replace('-', '_')))
     parser.add_argument('--repository', default='DreamGallery/Idoly-localify-translations')
+    parser.add_argument('--plugin-repository', default=PLUGIN_REPOSITORY)
     parser.add_argument('--project', type=Path, default=ROOT)
     parser.add_argument('--python', default=config.get('python', sys.executable))
     parser.add_argument('--api-python', default=config.get('api_python', sys.executable))
@@ -396,7 +404,9 @@ def main():
         value = getattr(args, key)
         if value is not None:
             setattr(args, key, Path(value).expanduser().resolve())
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args.repository):
+    if (not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args.repository)
+            or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args.plugin_repository)
+            or args.repository.lower() == args.plugin_repository.lower()):
         parser.error('Invalid release repository')
     for key in ('repository_dir', 'adv_dir', 'toolkit_dir', 'translator_dir', 'work_dir',
                 'solis_dir', 'notice_account', 'font_bundle', 'app_version'):
@@ -433,7 +443,13 @@ def main():
         return
     project, work = args.project.resolve(), args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
-    if not args.dry_run and resume_frozen_publication(args.repository, args.repository_dir, work):
+    plugin_repository = None if args.skip_apk else args.plugin_repository
+    plugin_commit = run(['git', '-C', project, 'rev-parse', 'HEAD'], capture=True).strip()
+    if not args.dry_run and plugin_repository:
+        with plugin_auth():
+            pass  # Fail before fetching/translating if cross-repository credentials are missing.
+    if not args.dry_run and resume_frozen_publication(
+            args.repository, args.repository_dir, work, plugin_repository=plugin_repository):
         return
     csv_dir, source = work / 'csv', work / 'source'
     source.mkdir(parents=True, exist_ok=True)
@@ -533,7 +549,10 @@ def main():
         apk = None
         apk_notes = None
         version = plugin_version(project)
-        existing_apk = None if args.dry_run or args.skip_apk else release_exists(args.repository, 'v' + version)
+        existing_apk = None
+        if not args.dry_run and not args.skip_apk:
+            with plugin_auth():
+                existing_apk = release_exists(args.plugin_repository, 'v' + version)
         if not args.skip_apk and (args.dry_run or needs_apk(existing_apk, version)):
             apk_notes = plugin_release_notes(project, version)
             if not args.font_bundle.is_file(): raise ValueError('Configured module font bundle is missing')
@@ -563,7 +582,8 @@ def main():
         batch = {'schema_version': 1, 'cutoff': cutoff, 'main_parent': snapshot_revision,
                  'collaboration_baseline': collaboration_baseline, 'published_data': {},
                  'text_version': manifest['version'], 'content_version': content_version, 'assets': assets,
-                 'plugin_version': version, 'plugin_asset': apk.name if apk else None}
+                 'plugin_version': version, 'plugin_asset': apk.name if apk else None,
+                 'plugin_commit': plugin_commit}
         data_commit, changed = (None, []) if args.dry_run else commit_batch(
             args.repository_dir, stage, snapshot_revision, batch, args.data_branch)
         return manifest, apk, apk_notes, data_commit, changed, output, version
@@ -572,14 +592,16 @@ def main():
     # race fails safely, with no force push and no implicit intake of newer work.
     finalized = finalize(base_revision)
     if isinstance(finalized, dict) and finalized.get('unchanged'):
-        publish_plugin_update(args.repository, finalized['version'], finalized['apk'],
-                              finalized['apk_notes'], args.dry_run)
+        if plugin_repository:
+            publish_plugin_update(plugin_repository, finalized['version'], finalized['apk'],
+                                  finalized['apk_notes'], args.dry_run, target_commit=plugin_commit)
         print(json.dumps({'schema_version': 1, 'unchanged': True, 'cutoff': cutoff, 'dry_run': args.dry_run}))
         return
     manifest, apk, apk_notes, data_commit, changed, output, version = finalized
     results = publish_built_assets(args.repository, version, apk, apk_notes,
                                   output, manifest['version'], args.dry_run,
-                                  target_commit=data_commit)
+                                  target_commit=data_commit, plugin_repository=plugin_repository,
+                                  plugin_commit=plugin_commit)
     report = {'schema_version': 1, 'version': manifest['version'], 'dry_run': args.dry_run,
               'releases': results, 'source_changed_files': len(changed), 'source_commit': data_commit, 'archive_sha256': manifest['archive']['sha256']}
     (work / 'release-report.json').write_text(json.dumps(report, indent=2) + '\n')

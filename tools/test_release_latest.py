@@ -125,7 +125,7 @@ class LatestReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'same immutable'):
             self.publish()
 
-    def test_same_assets_skip_reupload_but_refresh_plugin_link(self):
+    def test_text_alias_excludes_plugin_releases(self):
         self.publish()
         self.client.items['v0.2.5'] = {
             'id': 3, 'tag_name': 'v0.2.5', 'published_at': '2026-10-06T16:00:00Z',
@@ -133,25 +133,26 @@ class LatestReleaseTests(unittest.TestCase):
         self.client.uploaded.clear()
         self.publish()
         self.assertEqual(self.client.uploaded, [])
-        self.assertIn('/download/v0.2.5/idoly-localify-0.2.5.apk', self.client.items['latest']['body'])
-        self.assertLess(self.client.items['latest']['body'].index('v0.2.5'),
-                        self.client.items['latest']['body'].index('## 最新文本'))
+        self.assertNotIn('.apk', self.client.items['latest']['body'])
+        self.assertEqual(self.client.items['latest']['name'], '最新文本')
 
-    def test_plugin_only_refresh_preserves_all_text_assets_and_refs(self):
+    def test_text_metadata_refresh_preserves_all_assets_and_refs(self):
         self.publish()
         before_assets = copy.deepcopy(self.client.items['latest']['assets'])
         before_refs = copy.deepcopy(self.client.refs)
         self.client.items['v0.4.3'] = {
             'id': 3, 'tag_name': 'v0.4.3', 'published_at': '2026-10-21T15:00:00Z',
             'assets': [{'name': 'idoly-localify-0.4.3.apk', 'size': 10, 'digest': 'sha256:' + 'b' * 64}]}
+        self.client.items['latest']['body'] = 'legacy combined page'
+        self.client.items['latest']['name'] = '最新文本与插件'
         self.client.operations.clear()
         latest.refresh_latest_notes(self.client.repository, client=self.client)
-        self.assertIn('/download/v0.4.3/idoly-localify-0.4.3.apk', self.client.items['latest']['body'])
+        self.assertNotIn('.apk', self.client.items['latest']['body'])
         self.assertIn(self.tag, self.client.items['latest']['body'])
         self.assertEqual(self.client.items['latest']['assets'], before_assets)
         self.assertEqual(self.client.refs, before_refs)
         writes = [(m, p, set(d)) for m, p, d in self.client.operations if m != 'GET']
-        self.assertEqual(writes, [('PATCH', 'releases/2', {'body'})])
+        self.assertEqual(writes, [('PATCH', 'releases/2', {'body', 'name'})])
         self.client.operations.clear()
         latest.refresh_latest_notes(self.client.repository, client=self.client)
         self.assertTrue(all(m == 'GET' for m, _, _ in self.client.operations))
@@ -186,9 +187,9 @@ class LatestReleaseTests(unittest.TestCase):
                     return {'tag': 'v0.4.3', 'published': True}
                 with patch.object(publisher, 'publish', side_effect=published), \
                         patch.object(publisher, 'release_output'), \
-                        patch.object(latest, 'refresh_latest_notes',
-                                     side_effect=lambda *a: events.append('latest')):
-                    publisher.publish_plugin_update('owner/translations', '0.4.3', apk, 'Notes', False)
+                        patch.object(publisher, 'publish_latest_plugin',
+                                     side_effect=lambda *a, **k: events.append('latest')):
+                    publisher.publish_plugin_update('owner/plugin', '0.4.3', apk, 'Notes', False)
                 self.assertEqual(events, ['plugin', 'latest'] if apk else ['latest'])
 
     def test_replacing_assets_moves_only_latest_tag(self):
@@ -271,7 +272,7 @@ class LatestReleaseTests(unittest.TestCase):
                 patch.object(latest, 'publish_latest', side_effect=RuntimeError('alias failed')):
             with self.assertRaisesRegex(RuntimeError, 'alias failed'):
                 publisher.publish_built_assets('owner/translations', '0.2.5', None, None,
-                                               self.output, self.tag[5:], False)
+                                               self.output, self.tag[5:], False, plugin_repository=None)
         self.assertFalse(target.exists())
 
     def test_complete_alias_emits_historical_tag_for_retention(self):
@@ -280,7 +281,7 @@ class LatestReleaseTests(unittest.TestCase):
                 patch.object(publisher, 'publish', return_value={'tag': self.tag, 'unchanged': True}), \
                 patch.object(latest, 'publish_latest', return_value={'tag': 'latest', 'published': True}):
             publisher.publish_built_assets('owner/translations', '0.2.5', None, None,
-                                           self.output, self.tag[5:], False)
+                                           self.output, self.tag[5:], False, plugin_repository=None)
         self.assertEqual(target.read_text(), f'text_tag={self.tag}\n')
 
 

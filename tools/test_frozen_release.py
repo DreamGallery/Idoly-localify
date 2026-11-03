@@ -372,7 +372,7 @@ class FrozenBatchTests(unittest.TestCase):
         create = command.call_args_list[0].args[0]
         self.assertEqual(create[create.index('--target') + 1], self.base)
         with patch('release_followup.GitHub.request', return_value={'sha': 'f' * 40}), patch.object(release, 'run') as command:
-            with self.assertRaisesRegex(ValueError, 'different main commit'):
+            with self.assertRaisesRegex(ValueError, 'different source commit'):
                 release.publish('owner/repo', 'text-' + 'a' * 16, [asset], False, False, target_commit=self.base)
             command.assert_not_called()
 

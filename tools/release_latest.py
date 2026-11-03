@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from release_followup import GitHub, PLUGIN_TAG, TEXT_ASSETS, TEXT_TAG, alias_target, find_release, is_text, timestamp
+from release_followup import GitHub, TEXT_ASSETS, TEXT_TAG, alias_target, find_release, is_text
 from story_catalog_payloads import release_catalog_assets
 
 
@@ -22,32 +22,10 @@ def verified_assets(release, paths):
                and remote[path.name].get('digest') == 'sha256:' + sha256(path) for path in paths)
 
 
-def latest_plugin(releases):
-    candidates = []
-    for release in releases:
-        tag = release.get('tag_name', '')
-        if not PLUGIN_TAG.fullmatch(tag) or release.get('draft') or release.get('prerelease'):
-            continue
-        expected = f'idoly-localify-{tag[1:]}.apk'
-        assets = [a for a in release.get('assets', []) if a['name'] == expected]
-        if (len(assets) == 1 and assets[0].get('size', 0) > 0
-                and re.fullmatch(r'sha256:[0-9a-f]{64}', assets[0].get('digest') or '')):
-            candidates.append(release)
-    return max(candidates, key=timestamp, default=None)
-
-
-def notes(repository, text_tag, plugin):
+def notes(repository, text_tag):
     base = f'https://github.com/{repository}/releases'
-    lines = ['## 最新插件', '']
-    if plugin:
-        tag = plugin['tag_name']
-        lines += [f'**[{tag} · 下载插件 APK]({base}/download/{tag}/idoly-localify-{tag[1:]}.apk)**'
-                  f' · [更新说明与安装方法]({base}/tag/{tag})', '']
-    else:
-        lines += ['尚无正式插件版本。', '']
-    lines += ['## 最新文本', '', f'当前版本：[`{text_tag}`]({base}/tag/{text_tag})', '',
-              f'插件文本更新地址：`{base}/download/latest/manifest.json`']
-    return '\n'.join(lines) + '\n'
+    return (f'当前文本版本：[`{text_tag}`]({base}/tag/{text_tag})\n\n'
+            f'插件文本更新地址：`{base}/download/latest/manifest.json`\n')
 
 
 def upload(repository, path):
@@ -56,22 +34,22 @@ def upload(repository, path):
 
 
 def refresh_latest_notes(repository, dry_run=False, *, client=None):
-    """Refresh plugin links while preserving the published text assets and tag."""
+    """Refresh text metadata while preserving the published assets and tag."""
     if dry_run:
         return {'tag': 'latest', 'published': False}
     client = client or GitHub(repository)
     text_tag = alias_target(client)
     if text_tag is None:
-        raise ValueError('A complete latest text entry is required before refreshing plugin links')
+        raise ValueError('A complete latest text entry is required before refreshing text metadata')
     alias = find_release(client, 'latest')
     if alias.get('immutable'):
-        raise ValueError('The latest release is immutable; plugin links cannot be refreshed')
+        raise ValueError('The latest release is immutable; text metadata cannot be refreshed')
     source = client.request('GET', f'releases/tags/{text_tag}')
     if not source or not is_text(source):
         raise ValueError('Latest references an incomplete historical text release')
-    body = notes(repository, text_tag, latest_plugin(client.releases()))
-    if alias.get('body') != body:
-        client.request('PATCH', f'releases/{alias["id"]}', {'body': body})
+    body = notes(repository, text_tag)
+    if alias.get('body') != body or alias.get('name') != '最新文本':
+        client.request('PATCH', f'releases/{alias["id"]}', {'body': body, 'name': '最新文本'})
     return {'tag': 'latest', 'text_tag': text_tag, 'published': True}
 
 
@@ -103,8 +81,8 @@ def publish_latest(repository, output, text_tag, dry_run=False, *, client=None, 
     commit = client.request('GET', f'commits/{text_tag}')['sha']
     if not re.fullmatch(r'[0-9a-f]{40,64}', commit):
         raise ValueError('Historical text tag does not identify a valid commit')
-    body = notes(repository, text_tag, latest_plugin(client.releases()))
-    metadata = {'name': '最新文本与插件', 'body': body, 'make_latest': 'true',
+    body = notes(repository, text_tag)
+    metadata = {'name': '最新文本', 'body': body, 'make_latest': 'true',
                 'draft': False, 'prerelease': False}
     if not alias:
         alias = client.request('POST', 'releases',
