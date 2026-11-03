@@ -26,13 +26,15 @@ class FakeGitHub:
         self.latest = latest
         self.deleted = []
         self.fail_ref_once = False
-        self.alias_manifest = None
+        self.manifest_override = None
 
     def releases(self):
         return list(self.items.values())
 
     def release_manifest(self, release):
-        return self.alias_manifest
+        tag = release['tag_name']
+        return self.manifest_override or {'schema_version': 2, 'version': tag[5:],
+            'archive': {'url': f'https://github.com/{self.repository}/releases/download/{tag}/text-update.zip'}}
 
     def request(self, method, path, data=None, missing_ok=False):
         if method == 'GET':
@@ -74,7 +76,7 @@ class CleanupTests(unittest.TestCase):
                      text_release(13, tag_name='latest')]
         candidates, protected = followup.cleanup_plan(releases, 3, releases[0]['tag_name'], releases[1]['tag_name'])
         self.assertEqual([r['id'] for r in candidates], [5, 4, 3])
-        self.assertIn('latest', protected)
+        self.assertNotIn(13, [r['id'] for r in candidates])
 
     def test_preview_never_deletes_or_writes_journal(self):
         client = FakeGitHub([text_release(n) for n in range(1, 5)], text_release(4)['tag_name'])
@@ -138,23 +140,33 @@ class CleanupTests(unittest.TestCase):
             followup.cleanup(client, text_release(2)['tag_name'], 1, self.journal, True)
         self.assertFalse(client.deleted)
 
-    def test_fixed_latest_protects_its_older_referenced_archive(self):
-        client = FakeGitHub([text_release(n) for n in range(1, 5)] +
-                            [text_release(5, tag_name='latest')], 'latest')
+    def test_latest_protects_an_older_designated_version(self):
         older = text_release(1)['tag_name']
-        client.alias_manifest = {'schema_version': 2, 'version': older[5:],
-                                 'archive': {'url': f'https://github.com/{client.repository}/releases/download/{older}/text-update.zip'}}
+        client = FakeGitHub([text_release(n) for n in range(1, 5)], older)
         result = followup.cleanup(client, text_release(4)['tag_name'], 1, self.journal, True)
         self.assertEqual(result['deleted'], [text_release(n)['tag_name'] for n in (2, 3)])
         self.assertIn(older, client.items)
-        self.assertIn('latest', client.items)
 
     def test_broken_latest_manifest_stops_all_cleanup(self):
-        client = FakeGitHub([text_release(n) for n in range(1, 5)] +
-                            [text_release(5, tag_name='latest')], 'latest')
-        client.alias_manifest = {'schema_version': 2, 'version': 'bad', 'archive': {'url': 'https://other.example/'}}
+        client = FakeGitHub([text_release(n) for n in range(1, 5)], text_release(4)['tag_name'])
+        client.manifest_override = {'schema_version': 2, 'version': 'bad', 'archive': {'url': 'https://other.example/'}}
         with self.assertRaisesRegex(ValueError, 'manifest target'):
             followup.cleanup(client, text_release(4)['tag_name'], 1, self.journal, True)
+        self.assertFalse(client.deleted)
+
+    def test_cross_version_manifest_stops_cleanup_even_with_valid_archive_url(self):
+        client = FakeGitHub([text_release(n) for n in range(1, 5)], text_release(4)['tag_name'])
+        older = text_release(1)['tag_name']
+        client.manifest_override = {'schema_version': 2, 'version': older[5:],
+            'archive': {'url': f'https://github.com/{client.repository}/releases/download/{older}/text-update.zip'}}
+        with self.assertRaisesRegex(ValueError, 'manifest target'):
+            followup.cleanup(client, client.latest, 1, self.journal, True)
+        self.assertFalse(client.deleted)
+
+    def test_unexpected_latest_release_stops_cleanup(self):
+        client = FakeGitHub([text_release(1), text_release(2, tag_name='v0.7.0')], 'v0.7.0')
+        with self.assertRaisesRegex(ValueError, 'Unexpected latest release'):
+            followup.cleanup(client, text_release(1)['tag_name'], 1, self.journal, True)
         self.assertFalse(client.deleted)
 
 
@@ -182,6 +194,7 @@ class DispatchAndOutputsTests(unittest.TestCase):
             output = Path(temporary) / 'github-output'
             (Path(temporary) / 'manifest.json').write_text('{}')
             with patch.dict(release.os.environ, {'GITHUB_OUTPUT': str(output)}), \
+                    patch.object(release, 'publish_latest_plugin', return_value={}), \
                     patch.object(release, 'publish', side_effect=[{'tag': 'v0.2.5', 'published': True},
                                                                RuntimeError('text failed')]):
                 with self.assertRaisesRegex(RuntimeError, 'text failed'):

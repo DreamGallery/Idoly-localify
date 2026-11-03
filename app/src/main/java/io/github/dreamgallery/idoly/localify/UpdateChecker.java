@@ -14,8 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Metadata-only checks. No Activity is retained and no payload is downloaded. */
 final class UpdateChecker {
-    static final String RELEASES = FeedbackUi.REPOSITORY + "/releases";
-    private static final String API = "https://api.github.com/repos/DreamGallery/Idoly-localify-translations/releases?per_page=100";
+    private static final String REPOSITORY = "https://github.com/DreamGallery/Idoly-localify";
+    static final String RELEASES = REPOSITORY + "/releases";
+    private static final String API = "https://api.github.com/repos/DreamGallery/Idoly-localify/releases?per_page=100";
     private static final long INTERVAL = 6L * 60 * 60 * 1000;
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -54,7 +55,7 @@ final class UpdateChecker {
                 JSONObject asset = assets.getJSONObject(j);
                 if (asset.optString("name", "").endsWith(".apk") &&
                         asset.optString("browser_download_url", "").startsWith(
-                            FeedbackUi.REPOSITORY + "/releases/download/")) apk = true;
+                            REPOSITORY + "/releases/download/")) apk = true;
             }
             if (UpdateVersion.eligibleRelease(tag, release.optBoolean("draft"), release.optBoolean("prerelease"), apk))
                 tags.add(tag);

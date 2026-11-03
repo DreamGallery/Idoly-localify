@@ -278,6 +278,28 @@ class FrozenBatchTests(unittest.TestCase):
         cached = frozen.cached_assets(self.root, receipt)
         (cached / 'text-update.zip').write_text('tampered')
         with self.assertRaisesRegex(ValueError, 'missing or changed'): frozen.cached_assets(self.root, receipt)
+    def test_complete_receipt_repairs_latest_without_cached_assets_or_old_plugin_republication(self):
+        self.story(); receipt = self.prepare()
+        receipt['assets'] = {'manifest.json': 'b' * 64, 'text-update.zip': 'c' * 64}
+        commit, _ = frozen.commit_batch(self.main, self.stage, self.base, receipt); self.advance_main()
+        text = {'id': 31, 'tag_name': 'text-' + receipt['text_version'],
+                'assets': [{'name': name, 'digest': 'sha256:' + digest}
+                           for name, digest in receipt['assets'].items()]}
+        with patch.object(release, 'release_exists', return_value=text), \
+                patch('release_followup.GitHub') as github, \
+                patch('release_latest.mark_latest') as mark, \
+                patch.object(release, 'publish_built_assets') as publish, \
+                patch.object(frozen, 'cached_assets') as cache:
+            github.return_value.request.return_value = {'sha': commit}
+            self.assertFalse(release.resume_frozen_publication('owner/repo', self.main, self.root))
+            mark.assert_called_once_with(github.return_value, text)
+            publish.assert_not_called(); cache.assert_not_called()
+            github.return_value.request.return_value = {'sha': 'd' * 40}
+            mark.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'receipt commit'):
+                release.resume_frozen_publication('owner/repo', self.main, self.root)
+            mark.assert_not_called()
+
     def test_initial_rollout_retires_main_drafts_only_after_collaboration_preserves_them(self):
         draft = 'story/drafts/translation/main/adv_work.csv'
         self.write(self.main, draft, 'old unpublished draft')
@@ -372,7 +394,7 @@ class FrozenBatchTests(unittest.TestCase):
         create = command.call_args_list[0].args[0]
         self.assertEqual(create[create.index('--target') + 1], self.base)
         with patch('release_followup.GitHub.request', return_value={'sha': 'f' * 40}), patch.object(release, 'run') as command:
-            with self.assertRaisesRegex(ValueError, 'different main commit'):
+            with self.assertRaisesRegex(ValueError, 'different source commit'):
                 release.publish('owner/repo', 'text-' + 'a' * 16, [asset], False, False, target_commit=self.base)
             command.assert_not_called()
 

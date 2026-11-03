@@ -11,6 +11,10 @@
 | `preview_access_policy.h`、`appearance_overrides.h`、`profile_decoration_state.h` | 类别开关、进程内外观状态及过期页面检查，不依赖 Unity |
 | `runtime/photo_experiments.cpp` 与 `photo_*.inc` | 拍摄实验配置；请求、模型、限时内容、姿势与缩略图各自独立适配 |
 | `photo_experiment_policy.h`、`photo_model_catalog.h` | 替换规则、外观搭配校验及剧情专用模型目录，不依赖 Unity |
+| `runtime/managed_api.h`、`frame_dispatch.cpp` | 共享的 IL2CPP 签名检查和主线程帧回调；回调异常独立处理 |
+| `runtime/graphics_settings.cpp`、`graphics_policy.h` | 可选画质适配与配置校验；不修改文本或账号数据 |
+| `runtime/account_snapshot.cpp`、`AccountFiles`、`AccountArchive` | 当前账号数据读取、文件编排与加密容器，各自独立 |
+| `runtime/server_route.cpp`、`server_route_policy.h` | 进程启动时确定 gRPC 目标、隔离登录身份及发送前校验 |
 | `master_blob_matcher.h` | 校验记录补丁文件，并仅在原始 Blob 每个字节都相同时替换 |
 | `tools/` | 采集、翻译、迁移、编译和发布；这些 Python 工具不进入游戏运行时 |
 
@@ -33,6 +37,16 @@
 初始数据映射只处理指定的 Photo 预校验和创建请求，在序列化前深拷贝请求；角色、服装、发型、姿势、表情和场景使用已持有或已开放的基准。预校验与保存共享映射，兼容完整编成缩减为实际出镜角色；位置使用 MasterDB 业务编号。映射失败阻止发送，不能退回原实验 ID。图片上传标识、胶卷及认证信息保持原值，不伪造服务器结果；该选项关闭时保留游戏原有提交方式。
 
 原函数指针由 `inline_hook.h` 直接交给 ShadowHook 发布，不能先安装跳转再从临时变量复制。新增适配须验证缺失接口、开关关闭、旧页面隔离和对象复用；使用方式见[内容预览](content-preview.md)。
+
+## 账号、画质与网络
+
+`frame_dispatch` 统一持有 Canvas 帧回调，文本、缩略图和账号快照分别订阅，不能重复安装同一入口。Unity 对象访问留在游戏线程；Java 界面只交换配置、状态和已序列化数据。
+
+账号快照读取 `UserDataManager` 的实际持有数据，不读取实验性预览返回的副本。照片地址只用于下载，不写入导出清单。`AccountArchive` 使用 Tink 流式 AEAD；解密和完整性校验全部通过后才能恢复。官方登录仅在应用初始化前写入对应的 Firebase 账号记录，账号暂存文件置于应用私有的 `no_backup` 目录。服务器 ZIP 明确排除 `login.json`。
+
+服务器设置在安装 Hook 前读取，当前进程内不可切换。路由模块校验登录异步值类型的实际字段与 ABI，不假定泛型返回值是对象指针。请求头隔离放在非泛型 HTTP/2 发送入口；登录响应从 protobuf 解析入口读取，避免泛型实例和内联属性访问造成遗漏。原生状态和日志不得输出登录凭据、响应正文或照片访问地址。
+
+只在自定义目的地过滤请求头；其他资源请求保持原有路径。TLS 继续校验证书与主机名，不提供跳过验证选项。账号引继不转发到自定义服务。适配不完整时由先安装的通道门禁阻止自定义连接，不自动回退官方地址。功能边界和数据格式见[账号与连接说明](account-and-connection.md)。
 
 ## 插件设置界面
 
@@ -97,6 +111,7 @@ python3 tools/migrate_master_keys.py \
 ```sh
 python3 -m unittest discover -s tools -p 'test_dictionary_reload.py'
 python3 -m unittest discover -s tools -p 'test_preview_runtime.py'
+python3 -m unittest discover -s tools -p 'test_account_archive.py'
 python3 -m unittest discover -s tools -p 'test_master*.py'
 python3 -m unittest discover -s tools -p 'test_migrate_master_keys.py'
 ./gradlew :app:externalNativeBuildDebug

@@ -51,6 +51,21 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     private static native boolean nativeSetPhotoExperiments(String json);
     private static native String nativeGetPhotoThumbnail(String asset);
     private static native void nativeCancelPhotoThumbnails();
+    private static native String nativeGetGraphicsSettings();
+    private static native boolean nativeConfigureServer(String json);
+    private static native boolean nativeValidateServer(String json);
+    private static native String nativeServerStatus();
+    static boolean validateServer(String json){return NATIVE_READY.get() && nativeValidateServer(json);}
+    static String serverStatus(){return NATIVE_READY.get()?nativeServerStatus():"{}";}
+    private static native boolean nativeRequestAccountSnapshot(boolean photos);
+    private static native String nativeAccountSnapshotStatus();
+    private static native String nativeAccountSnapshotDocument();
+    private static native byte[] nativeAccountSnapshotProtobuf();
+    static boolean requestAccountSnapshot(boolean photos) { return NATIVE_READY.get() && nativeRequestAccountSnapshot(photos); }
+    static String accountSnapshotStatus() { return NATIVE_READY.get() ? nativeAccountSnapshotStatus() : "{}"; }
+    static String accountSnapshotDocument() { return NATIVE_READY.get() ? nativeAccountSnapshotDocument() : ""; }
+    static byte[] accountSnapshotProtobuf() { return NATIVE_READY.get() ? nativeAccountSnapshotProtobuf() : new byte[0]; }
+    private static native boolean nativeSetGraphicsSettings(String json);
     private static native void nativePauseCaptureWrites(boolean paused);
 
     static String previewAccessStatus() {
@@ -79,6 +94,14 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
 
     static void cancelPhotoThumbnails() {
         if (NATIVE_READY.get()) nativeCancelPhotoThumbnails();
+    }
+
+    static String graphicsSettingsStatus() {
+        return NATIVE_READY.get() ? nativeGetGraphicsSettings() : "{}";
+    }
+
+    static boolean setGraphicsSettings(String json) {
+        return NATIVE_READY.get() && nativeSetGraphicsSettings(json);
     }
 
     static void pauseCaptureWrites(boolean paused) {
@@ -137,6 +160,11 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackage) {
         if (!GAME.equals(loadPackage.packageName)) return;
+        if(GAME.equals(loadPackage.processName))XposedHelpers.findAndHookMethod(Application.class,"attach",Context.class,new XC_MethodHook(){
+            @Override protected void afterHookedMethod(MethodHookParam param){
+                AccountCredentials.earlyRestore((Context)param.args[0]);
+            }
+        });
         NoticeWebViewHook.install();
         try {
             XposedHelpers.findAndHookMethod("com.unity3d.player.UnityPlayer",
@@ -169,10 +197,12 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
             TextHotUpdater.recover(dataDir);
             TranslationPreferences.initialize(context);
             LocalifyOverlayUi.install((Application) context.getApplicationContext());
+            GraphicsDisplayMode.install((Application) context.getApplicationContext());
             LocalifyOverlayUi.configure(dataDir);
             UpdateChecker.startup(context, dataDir);
             stage = "加载原生库";
             System.loadLibrary("idoly_localify");
+            nativeConfigureServer(ServerSettingsUi.savedForStartup(context));
             final boolean translationEnabled = TranslationPreferences.active();
             File dictionary = new File(dataDir, "dict.json");
             stage = "准备本地化资源";
@@ -188,6 +218,7 @@ public final class HookEntry implements IXposedHookLoadPackage, IXposedHookZygot
                 new File(dataDir, "dump.jsonl").getAbsolutePath(), imagesReady, translationEnabled);
             if (!ok) throw new IllegalStateException("Native installation failed");
             NATIVE_READY.set(true);
+            GraphicsSettingsUi.restoreSaved(context);
             if (translationEnabled) FontProfileEditor.restoreSaved(dataDir);
             Log.i(TAG, "Native initialization succeeded; translation=" + translationEnabled);
         } catch (Throwable error) {

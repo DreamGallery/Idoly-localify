@@ -1,8 +1,8 @@
 {
-  "version": "0.6.0",
+  "version": "0.7.0",
   "notes": [
-    "扩展实验性拍摄与模型替换，支持服装、发型、饰品及部分限时、联动内容。使用前请阅读[功能说明](https://github.com/DreamGallery/Idoly-localify/blob/main/docs/content-preview.md)。",
-    "统一设置页面和下拉框样式，改进页面与弹窗过渡，支持外观缩略图及按组合排列的角色列表。",
-    "优化剧情替换目录的读取与筛选，并修正拍摄页面的“自动拍摄”按钮译文。"
+    "新增「账号与数据」，支持加密登录备份、完整数据快照和可选照片导出；备份默认保存在系统下载目录。",
+    "新增高级画质设置，可调整目标帧率、渲染倍率与抗锯齿，并恢复游戏默认。",
+    "新增自定义 gRPC 服务器连接，使用独立登录凭据；恢复进度仍需兼容服务端，详见[账号与连接说明](https://github.com/DreamGallery/Idoly-localify/blob/main/docs/account-and-connection.md)。"
   ]
 }

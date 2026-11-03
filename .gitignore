@@ -96,6 +96,9 @@ private/
 *account*.json
 *session*.json
 client_config.json
+*.idolyaccount
+/account-data-*.zip
+/idoly-server.json
 *.p8
 
 # Deliberately committed examples must contain placeholders only.

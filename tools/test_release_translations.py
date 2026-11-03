@@ -61,7 +61,7 @@ class ReleaseTests(unittest.TestCase):
         args = [c.args[0] for c in run.call_args_list]
         self.assertEqual([a[2] for a in args], ['create', 'upload', 'upload', 'edit'])
         self.assertIn('--latest=true', args[-1])
-    def test_apk_release_never_becomes_latest(self):
+    def test_version_publication_can_defer_latest_until_verification(self):
         with patch.object(release, 'release_exists', return_value=None), patch.object(release, 'run') as run:
             release.publish('owner/repo', 'v0.2.0', [self.asset], False, False)
         self.assertIn('--latest=false', run.call_args_list[-1].args[0])

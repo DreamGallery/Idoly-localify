@@ -95,7 +95,7 @@ def dispatch(source, target, tag):
 
 
 def is_text(release):
-    return (bool(TEXT_TAG.fullmatch(release.get('tag_name', '')))
+    return (isinstance(release, dict) and bool(TEXT_TAG.fullmatch(release.get('tag_name', '')))
             and not release.get('draft') and not release.get('prerelease')
             and {a['name'] for a in release.get('assets', [])} in
                 (TEXT_ASSETS, TEXT_ASSETS | set(CATALOG_NAMES)))
@@ -108,32 +108,28 @@ def timestamp(release):
     return value
 
 
-def alias_target(client):
-    alias = client.request('GET', 'releases/tags/latest', missing_ok=True)
-    if alias is None or alias.get('draft'):
-        return None
-    if alias.get('prerelease') or {a['name'] for a in alias.get('assets', [])} != TEXT_ASSETS:
+def latest_text_target(client):
+    release = client.request('GET', 'releases/latest')
+    if not is_text(release):
         raise ValueError('Unexpected latest release; cleanup stopped')
-    manifest = client.release_manifest(alias)
+    manifest = client.release_manifest(release)
     tag = 'text-' + str(manifest.get('version', ''))
     expected_url = f'https://github.com/{client.repository}/releases/download/{tag}/text-update.zip'
-    if (not TEXT_TAG.fullmatch(tag) or manifest.get('schema_version') != 2
+    if (tag != release['tag_name'] or manifest.get('schema_version') != 2
             or manifest.get('archive', {}).get('url') != expected_url):
         raise ValueError('Unexpected latest manifest target; cleanup stopped')
     return tag
 
 
-def cleanup_plan(releases, keep, current, latest, referenced=None):
+def cleanup_plan(releases, keep, current, latest):
     if keep < 1 or keep > 1000:
         raise ValueError('Retention must be 1–1000, or 0 to disable cleanup')
     texts = sorted((r for r in releases if is_text(r)), key=timestamp, reverse=True)
     if current not in {r['tag_name'] for r in texts}:
         raise ValueError('Current text release is missing or incomplete; cleanup stopped')
-    if referenced and referenced not in {r['tag_name'] for r in texts}:
-        raise ValueError('Latest references a missing text release; cleanup stopped')
-    protected = {current, latest, 'latest'} | {r['tag_name'] for r in texts[:keep]}
-    if referenced:
-        protected.add(referenced)
+    if latest not in {r['tag_name'] for r in texts}:
+        raise ValueError('Latest text release is missing or incomplete; cleanup stopped')
+    protected = {current, latest} | {r['tag_name'] for r in texts[:keep]}
     return [r for r in texts if r['tag_name'] not in protected], protected
 
 
@@ -150,9 +146,8 @@ def cleanup(client, current, keep, journal_path, apply=False):
         return {'cleanup': 'disabled'}
     if not TEXT_TAG.fullmatch(current):
         raise ValueError('Expected the successfully published text tag')
-    latest = client.request('GET', 'releases/latest')['tag_name']
-    referenced = alias_target(client)
-    candidates, protected = cleanup_plan(client.releases(), keep, current, latest, referenced)
+    latest = latest_text_target(client)
+    candidates, protected = cleanup_plan(client.releases(), keep, current, latest)
     journal = {'schema_version': 1, 'repository': client.repository, 'pending': {}}
     if journal_path.is_file():
         journal = json.loads(journal_path.read_text(encoding='utf-8'))
@@ -170,7 +165,7 @@ def cleanup(client, current, keep, journal_path, apply=False):
     removed = []
     for tag in tags:
         # Recheck mutable remote state immediately before each destructive step.
-        if tag in {client.request('GET', 'releases/latest')['tag_name'], alias_target(client)}:
+        if tag == latest_text_target(client):
             continue
         path = 'releases/tags/' + quote(tag, safe='')
         release = client.request('GET', path, missing_ok=True)
@@ -193,7 +188,7 @@ def cleanup(client, current, keep, journal_path, apply=False):
             client.request('DELETE', f'releases/{release["id"]}')
         if ref is not None:
             if (client.request('GET', path, missing_ok=True) is not None
-                    or tag in {client.request('GET', 'releases/latest')['tag_name'], alias_target(client)}):
+                    or tag == latest_text_target(client)):
                 raise ValueError('Release was recreated during cleanup; tag retained')
             fresh_ref = client.request('GET', ref_path, missing_ok=True)
             if fresh_ref is not None:
