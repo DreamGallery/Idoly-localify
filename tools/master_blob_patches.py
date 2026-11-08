@@ -17,6 +17,7 @@ import re
 import struct
 import sys
 import tempfile
+import time
 
 from localize import write_json
 from master_json import ORIG, ROOT, ZH, iter_fields, require_ready
@@ -57,15 +58,37 @@ def encrypted_pack(pack, version: str, cache_dir: Path, requests_module,
             pass
     if offline:
         raise ValueError(f"{pack.type}: verified encrypted MasterDB cache is missing")
-    response = requests_module.get(pack.downloadUrl, timeout=60)
-    response.raise_for_status()
-    if len(response.content) != pack.fileSize:
-        raise ValueError(f"{pack.type}: download length differs from MasterTag")
+    from requests.exceptions import ChunkedEncodingError, ConnectionError, HTTPError, Timeout
+    retries = 3
+    for attempt in range(retries + 1):
+        # Retry the complete body read as well as the request. Adapter retries
+        # alone do not cover a connection breaking while Requests reads content.
+        try:
+            with requests_module.get(pack.downloadUrl, timeout=60) as response:
+                response.raise_for_status()
+                content = response.content
+        except (ChunkedEncodingError, ConnectionError, HTTPError, Timeout) as error:
+            if isinstance(error, HTTPError) and (error.response is None or
+                    error.response.status_code not in (408, 429, 500, 502, 503, 504)):
+                raise
+            failure = error
+        else:
+            if len(content) == pack.fileSize:
+                break
+            failure = ValueError(f"{pack.type}: download length differs from MasterTag")
+        if attempt == retries:
+            print(f"MasterDB: {pack.type}: download failed after {attempt + 1} attempts "
+                  f"({type(failure).__name__})", flush=True)
+            raise failure
+        delay = 2 ** attempt
+        print(f"MasterDB: {pack.type}: download failed ({type(failure).__name__}); "
+              f"retry {attempt + 1}/{retries} in {delay}s", flush=True)
+        time.sleep(delay)
     with tempfile.NamedTemporaryFile(dir=directory, prefix=".master-db-",
                                      delete=False) as stream:
         temporary = Path(stream.name)
         try:
-            stream.write(response.content)
+            stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
             digest = file_digest(temporary)

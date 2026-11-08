@@ -1,8 +1,14 @@
+from contextlib import nullcontext
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import tempfile
+from threading import Thread
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, call, patch
+
+import requests
 
 from master_blob_patches import encrypted_pack, field_slot, input_snapshot, patch_blob, retained_conflicts
 from master_identity import rules_metadata
@@ -58,7 +64,7 @@ class MasterBlobPatchTests(unittest.TestCase):
             def get(cls, url, timeout):
                 cls.calls += 1
                 self.assertEqual((url, timeout), ("https://example.test/Music", 60))
-                return SimpleNamespace(content=b"ciphered", raise_for_status=lambda: None)
+                return nullcontext(SimpleNamespace(content=b"ciphered", raise_for_status=lambda: None))
 
         pack = SimpleNamespace(type="Music", downloadUrl="https://example.test/Music",
                                fileSize=8, cryptoKey="secret")
@@ -110,6 +116,96 @@ class MasterBlobPatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "round-trip"):
             patch_blob('{ "id": "one", "name": "原題", "choices": [] }'.encode(),
                        FakeMessage, "one", {}, "Story")
+
+
+class MasterPackDownloadTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.cache = Path(temporary.name)
+        self.pack = SimpleNamespace(type="Music", downloadUrl="https://example.test/Music",
+                                    fileSize=8, cryptoKey="fixture-key")
+        sleeping = patch("master_blob_patches.time.sleep")
+        self.sleep = sleeping.start()
+        self.addCleanup(sleeping.stop)
+        printing = patch("builtins.print")
+        self.print = printing.start()
+        self.addCleanup(printing.stop)
+
+    def test_complete_download_recovers_from_broken_body_length_and_server_error(self):
+        responses = [(200, 8, b"cut"), (200, 3, b"cut"), (503, 0, b""),
+                     (200, 8, b"ciphered")]
+        seen_files = []
+        cache = self.cache
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen_files.append([p for p in cache.rglob("*") if p.is_file()])
+                status, size, body = responses.pop(0)
+                self.send_response(status)
+                self.send_header("Content-Length", str(size))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.pack.downloadUrl = f"http://127.0.0.1:{server.server_port}/Music"
+            try:
+                with requests.Session() as client:
+                    client.trust_env = False
+                    output = encrypted_pack(self.pack, "v1", cache, client)
+                    self.assertEqual(output.read_bytes(), b"ciphered")
+                    self.assertEqual(encrypted_pack(self.pack, "v1", cache, client), output)
+            finally:
+                server.shutdown()
+                thread.join()
+        self.assertEqual(seen_files, [[], [], [], []])
+        self.assertEqual(self.sleep.call_args_list, [call(1), call(2), call(4)])
+        logs = [item.args[0] for item in self.print.call_args_list]
+        for index, message in enumerate(logs, 1):
+            self.assertIn("MasterDB: Music: download failed", message)
+            self.assertIn(f"retry {index}/3", message)
+            self.assertNotIn(self.pack.downloadUrl, message)
+        self.assertEqual(len(logs), 3)
+
+    def test_network_failures_stop_after_three_retries_without_writing_cache(self):
+        for failure_type in (requests.exceptions.ConnectionError, requests.exceptions.ConnectTimeout,
+                             requests.exceptions.ReadTimeout, requests.exceptions.ChunkedEncodingError):
+            with self.subTest(failure=failure_type.__name__):
+                self.sleep.reset_mock()
+                client = Mock()
+                client.get.side_effect = failure_type("download interrupted")
+                with self.assertRaises(failure_type):
+                    encrypted_pack(self.pack, "v1", self.cache, client)
+                self.assertEqual(client.get.call_count, 4)
+                self.assertEqual(self.sleep.call_args_list, [call(1), call(2), call(4)])
+                self.assertFalse(any(p.is_file() for p in self.cache.rglob("*")))
+
+    def test_incomplete_download_never_becomes_a_valid_cache_entry(self):
+        client = Mock()
+        client.get.return_value = nullcontext(SimpleNamespace(
+            content=b"cut", raise_for_status=lambda: None))
+        with self.assertRaisesRegex(ValueError, "download length differs"):
+            encrypted_pack(self.pack, "v1", self.cache, client)
+        self.assertEqual(client.get.call_count, 4)
+        self.assertFalse(any(p.is_file() for p in self.cache.rglob("*")))
+
+    def test_permanent_http_errors_fail_without_retry(self):
+        for status in (400, 401, 403, 404):
+            with self.subTest(status=status):
+                client = Mock()
+                client.get.side_effect = requests.exceptions.HTTPError(
+                    response=SimpleNamespace(status_code=status))
+                with self.assertRaises(requests.exceptions.HTTPError):
+                    encrypted_pack(self.pack, "v1", self.cache, client)
+                self.assertEqual(client.get.call_count, 1)
+                self.sleep.assert_not_called()
 
 
 if __name__ == "__main__":
