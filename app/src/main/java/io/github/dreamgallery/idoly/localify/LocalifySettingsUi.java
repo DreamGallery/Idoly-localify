@@ -30,7 +30,7 @@ final class LocalifySettingsUi {
     }
 
     static void show(Activity activity, Runnable update, Runnable address, Runnable font,
-                     Runnable hide, Runnable story, Runnable eventStory, Runnable specialStory, boolean capturing,
+                     Runnable hide, Runnable story, Runnable bondStory, Runnable eventStory, Runnable specialStory, boolean capturing,
                      File directory) {
         dismiss();
         Dialog dialog = new SettingsDialog(activity);
@@ -64,6 +64,7 @@ final class LocalifySettingsUi {
         // Keep the visible settings page behind modal story tools; closing them returns here.
         LinearLayout stories = SettingsUiStyle.card(page.body, "剧情播放", "选择实际剧情与同类入口，可分别恢复。");
         SettingsUiStyle.cardRow(stories, "卡片剧情替换", null, story);
+        SettingsUiStyle.cardRow(stories, "羁绊剧情替换", null, bondStory);
         SettingsUiStyle.cardRow(stories, "普通活动剧情替换", null, eventStory);
         SettingsUiStyle.cardRow(stories, "实验性 · 特殊活动剧情替换", null, specialStory);
         LinearLayout extras = SettingsUiStyle.card(page.body, "额外功能", null);

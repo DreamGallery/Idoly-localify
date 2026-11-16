@@ -33,7 +33,7 @@
 
 - [文本流程](docs/text-pipeline.md) · [在线更新](docs/hot-update.md)
 - [字体配置](docs/font-profiles.md) · [图片汉化](docs/image-localization.md)
-- [卡片剧情替换](docs/card-story-swap.md) · [活动剧情替换](docs/event-story-swap.md)
+- [卡片剧情替换](docs/card-story-swap.md) · [羁绊剧情替换](docs/bond-story-swap.md) · [活动剧情替换](docs/event-story-swap.md)
 
 在[翻译仓库 Issues](https://github.com/DreamGallery/Idoly-localify-translations/issues)反馈漏翻或显示问题。插件采集文件仅保存本机，提交前请自行检查个人信息。自动抓取、翻译、校对导入与发布的 GitHub Actions 均放在翻译仓库。
 
@@ -42,6 +42,15 @@
 方案参考 [gkms-localify](https://github.com/imas-tools/gkms-localify)。代码采用 [GPL-3.0](LICENSE)；游戏资源、字体和第三方组件遵循各自许可。
 
 ## 更新日志
+
+<details>
+<summary>0.7.1 · 羁绊剧情替换与双六修复</summary>
+
+- 新增羁绊剧情替换，支持按角色筛选、独立恢复，标题、话数和登场人物跟随实际播放内容；目录随文本资源更新。
+- 修复开启翻译时双六小剧情可能出现的文字空白和播放卡住，保留游戏原有的逐字显示动画。
+- 剧情替换列表返回时直接回到插件主设置页，不再重复弹出说明窗口。
+
+</details>
 
 <details>
 <summary>0.7.0 · 账号备份、画质与连接设置</summary>

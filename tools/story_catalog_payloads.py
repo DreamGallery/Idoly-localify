@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 import re
 
-CATALOG_NAMES = ('card-stories.json', 'event-stories.json', 'love-stories.json')
+LEGACY_CATALOG_NAMES = ('card-stories.json', 'event-stories.json', 'love-stories.json')
+CATALOG_NAMES = (*LEGACY_CATALOG_NAMES, 'bond-stories.json')
 CATALOG_LIMIT = 1024 * 1024
 
 
@@ -41,17 +42,32 @@ def validate_catalog(name: str, data: bytes) -> dict:
     return value
 
 
+def catalog_entries(manifest: dict) -> dict:
+    if 'story_catalogs' not in manifest:
+        if 'additional_story_catalogs' in manifest:
+            raise ValueError('Additional story catalogs require the base catalogs')
+        return {}
+    entries = manifest['story_catalogs']
+    if not isinstance(entries, dict) or set(entries) != set(LEGACY_CATALOG_NAMES):
+        raise ValueError('Story catalog release must contain all three categories')
+    entries = dict(entries)
+    if 'additional_story_catalogs' in manifest:
+        extra = manifest['additional_story_catalogs']
+        if not isinstance(extra, dict) or set(extra) != {'bond-stories.json'}:
+            raise ValueError('Invalid additional story catalogs')
+        entries.update(extra)
+    return entries
+
+
 def release_catalog_assets(output: Path, repository: str | None = None,
                            tag: str | None = None) -> list[Path]:
-    """Old releases have no catalogs; new releases must contain all three."""
+    """Accept legacy releases and the extended catalog format without mixing versions."""
     manifest = json.loads((output / 'manifest.json').read_text(encoding='utf-8'))
-    if 'story_catalogs' not in manifest:
-        return []
-    entries = manifest['story_catalogs']
-    if not isinstance(entries, dict) or set(entries) != set(CATALOG_NAMES):
-        raise ValueError('Story catalog release must contain all three categories')
+    entries = catalog_entries(manifest)
     result = []
     for name in CATALOG_NAMES:
+        if name not in entries:
+            continue
         path = output / name
         if path.is_symlink():
             raise ValueError('Symlinked story catalog release asset')

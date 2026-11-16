@@ -27,7 +27,7 @@ inline bool storySwapBaseName(const std::string& name) {
 
 inline bool storySwapKindName(const std::string& name, const std::string& kind) {
     if (kind == "card") return storySwapBaseName(name);
-    if (kind != "event" && kind != "love") return false;
+    if (kind != "event" && kind != "love" && kind != "bond") return false;
     const std::string prefix = "adv_" + kind + "_";
     if (name.compare(0, prefix.size(), prefix) != 0) return false;
     // Reuse the strict ASCII basename validation without admitting other families.
@@ -35,24 +35,24 @@ inline bool storySwapKindName(const std::string& name, const std::string& kind) 
 }
 
 inline std::string storySwapKind(const std::string& name) {
-    for (const auto* kind : {"card", "event", "love"})
+    for (const auto* kind : {"card", "event", "love", "bond"})
         if (storySwapKindName(name, kind) || (std::string(kind) == "card" && storySwapCardName(name)))
             return kind;
     return {};
 }
 
-// Event/love replacements stay complete ADV scripts. Love-specific choice and
-// branch commands must remain untouched; title parsing is deliberately card-only.
+// Non-card replacements must remain complete ADV scripts. Only Love supports
+// API-selected branch groups, which must retain their original structure.
 inline bool storySwapScriptCompatible(const std::string& script, const std::string& kind) {
     if (kind == "card") return true; // Preserve the existing card behavior.
-    if (kind != "event" && kind != "love") return false;
+    if (kind != "event" && kind != "love" && kind != "bond") return false;
     if (script.empty() || script.front() != '[' || script.find('\0') != std::string::npos)
         return false;
     const auto end = script.find_last_not_of(" \r\n\t");
     if (end == std::string::npos || end < 9 || script.substr(end - 9, 10) != "[timeline]") return false;
     // Love Condition branches stay intact. The game's original Love.Start /
     // Love.Restart branch selection is preserved; this only aliases the TXT.
-    if (kind == "event" && (script.find("[choicegroup") != std::string::npos ||
+    if (kind != "love" && (script.find("[choicegroup") != std::string::npos ||
                            script.find("[branchgroup") != std::string::npos)) return false;
     return true;
 }
@@ -169,9 +169,8 @@ struct StorySwapTitle {
     std::string character, episode, title;
 };
 
-// Compiled card scripts have one bounded [title] line. Accept the observed
-// missing space after 第N话 and reviewed N话 titles without 第. Never guess
-// metadata from arbitrary dialogue.
+// Card/bond scripts have one bounded [title] line. Accept both translated
+// episode labels and the game's "episode N" format, never arbitrary dialogue.
 inline StorySwapTitle storySwapScriptTitle(const std::string& script) {
     constexpr const char* prefix = "[title title=";
     const auto pos = script.find(prefix);
@@ -180,12 +179,16 @@ inline StorySwapTitle storySwapScriptTitle(const std::string& script) {
     if (end == std::string::npos || end - pos > 1024 ||
         script.find('\n', pos) < end || script.find(prefix, end) != std::string::npos) return {};
     const auto value = script.substr(pos + 13, end - pos - 13);
-    auto episodeStart = value.find(" 第");
-    const bool hasOrdinal = episodeStart != std::string::npos;
-    if (!hasOrdinal) episodeStart = value.find(' ');
+    auto episodeStart = value.find(" episode ");
+    const bool english = episodeStart != std::string::npos;
+    if (!english) episodeStart = value.find(" 第");
+    const bool hasOrdinal = !english && episodeStart != std::string::npos;
+    if (!english && !hasOrdinal) episodeStart = value.find(' ');
     if (episodeStart == std::string::npos || episodeStart == 0) return {};
-    const auto numberStart = episodeStart + (hasOrdinal ? std::string(" 第").size() : 1);
-    const auto numberEnd = value.find("话", numberStart);
+    const auto numberStart = episodeStart + (english ? 9 : hasOrdinal ? std::string(" 第").size() : 1);
+    auto numberEnd = english ? value.find(' ', numberStart) : value.find("话", numberStart);
+    if (!english && numberEnd == std::string::npos) numberEnd = value.find("話", numberStart);
+    if (!english && numberEnd == std::string::npos) numberEnd = value.find("集", numberStart);
     if (numberEnd == std::string::npos || numberEnd == numberStart || numberEnd - numberStart > 2) return {};
     int episode = 0;
     for (size_t i = numberStart; i < numberEnd; ++i) {
@@ -193,7 +196,7 @@ inline StorySwapTitle storySwapScriptTitle(const std::string& script) {
         episode = episode * 10 + value[i] - '0';
     }
     if (episode < 1 || episode > 20) return {};
-    size_t titleStart = numberEnd + std::string("话").size();
+    size_t titleStart = numberEnd + (english ? 1 : std::string("话").size());
     while (titleStart < value.size() && value[titleStart] == ' ') ++titleStart;
     if (titleStart == value.size()) return {};
     return {value.substr(0, episodeStart), "第" + std::to_string(episode) + "话", value.substr(titleStart)};
@@ -210,17 +213,19 @@ inline StorySwapPlaybackTitles storySwapPlaybackTitles(
         const StorySwapSelection& selection, const std::string& requested,
         const std::string& loaded, const std::string& entryScript, const std::string& sourceScript) {
     if (requested == loaded || selection.resolve(requested) != loaded) return {};
-    if (!storySwapCardName(requested)) {
+    const auto catalogTitles = [&]() -> StorySwapPlaybackTitles {
         // Event scripts commonly contain only [title]. Their reviewed metadata
         // supplies playback labels; no character or introduction is inferred.
         if (selection.entryTitle.empty() || selection.sourceTitle.empty()) return {};
         return {{"", "第" + std::to_string(selection.entryEpisode) + "话", selection.entryTitle},
                 {"", "第" + std::to_string(selection.sourceEpisode) + "话", selection.sourceTitle},
                 selection.entryTitle, selection.sourceTitle, true};
-    }
+    };
+    const bool bond = storySwapKind(requested) == "bond";
+    if (!storySwapCardName(requested) && !bond) return catalogTitles();
     StorySwapPlaybackTitles result{storySwapScriptTitle(entryScript),
                                   storySwapScriptTitle(sourceScript), {}, {}};
-    if (!result.ready()) return {};
+    if (!result.ready()) return bond ? catalogTitles() : StorySwapPlaybackTitles{};
     if (selection.entryEpisode && (result.entry.episode != "第" + std::to_string(selection.entryEpisode) + "话" ||
         result.source.episode != "第" + std::to_string(selection.sourceEpisode) + "话")) return {};
     result.entryCatalogTitle = selection.entryTitle;
@@ -232,13 +237,26 @@ inline StorySwapPlaybackTitles storySwapPlaybackTitles(
 }
 
 inline int storySwapTitleRole(const std::string& path) {
-    const std::string root = "WindowSystem/WindowRoot/StoryWindow(Clone)/StoryPlayerScreen(Clone)/";
-    if (path == root + "ScreenCanvas/ScreenRoot/Header/Title") return 1;
-    if (path == root + "ScreenCanvas/ScreenRoot/Header/SmallTitle" ||
-        path == root + "StoryFullScreenLoading/Root/Layout/SmallTitle") return 2;
-    if (path == root + "StoryFullScreenLoading/Root/Layout/EpisodeText") return 3;
-    if (path == root + "StoryFullScreenLoading/Root/Layout/Title") return 4;
+    // Bond playback is hosted by CompanyWindow. Match the same player's
+    // exact labels in either host, never similarly named list/menu controls.
+    for (const auto* host : {"StoryWindow(Clone)", "CompanyWindow(Clone)"}) {
+        const std::string root = "WindowSystem/WindowRoot/" + std::string(host) + "/StoryPlayerScreen(Clone)/";
+        if (path == root + "ScreenCanvas/ScreenRoot/Header/Title") return 1;
+        if (path == root + "ScreenCanvas/ScreenRoot/Header/SmallTitle" ||
+            path == root + "StoryFullScreenLoading/Root/Layout/SmallTitle") return 2;
+        if (path == root + "StoryFullScreenLoading/Root/Layout/EpisodeText") return 3;
+        if (path == root + "StoryFullScreenLoading/Root/Layout/Title") return 4;
+    }
     return 0;
+}
+
+inline std::string storySwapEpisodeLabel(const std::string& canonical, bool english) {
+    if (!english) return canonical;
+    const std::string prefix = "第", suffix = "话";
+    if (canonical.size() <= prefix.size() + suffix.size() ||
+        canonical.compare(0, prefix.size(), prefix) != 0 ||
+        canonical.compare(canonical.size() - suffix.size(), suffix.size(), suffix) != 0) return {};
+    return "episode " + canonical.substr(prefix.size(), canonical.size() - prefix.size() - suffix.size());
 }
 
 inline std::string storySwapTitleReplacement(const StorySwapPlaybackTitles& titles,
@@ -248,12 +266,16 @@ inline std::string storySwapTitleReplacement(const StorySwapPlaybackTitles& titl
     if (!role) return {};
     const std::string key = storySwapTitleKey(current);
     if (role == 2) return !titles.catalogOnly && key == storySwapTitleKey(titles.entry.character) ? titles.source.character : "";
-    if (role == 3) return key == titles.entry.episode ? titles.source.episode : "";
+    const bool englishEpisode = key.compare(0, 7, "episode") == 0;
+    const auto entryEpisode = storySwapEpisodeLabel(titles.entry.episode, englishEpisode);
+    const auto sourceEpisode = storySwapEpisodeLabel(titles.source.episode, englishEpisode);
+    if ((role == 1 || role == 3) && (entryEpisode.empty() || sourceEpisode.empty())) return {};
+    if (role == 3) return key == storySwapTitleKey(entryEpisode) ? sourceEpisode : "";
     if (titles.catalogOnly && key == storySwapTitleKey(titles.entryCatalogTitle))
         return storySwapTitleLines(titles.sourceCatalogTitle, role == 1);
-    const std::string prefix = role == 1 ? titles.entry.episode : "";
+    const std::string prefix = role == 1 ? entryEpisode : "";
     if (key != storySwapTitleKey(prefix + titles.entry.title) &&
         (titles.entryCatalogTitle.empty() || key != storySwapTitleKey(prefix + titles.entryCatalogTitle))) return {};
     const auto title = titles.sourceCatalogTitle.empty() ? titles.source.title : titles.sourceCatalogTitle;
-    return role == 1 ? titles.source.episode + " " + storySwapTitleLines(title, true) : storySwapTitleLines(title);
+    return role == 1 ? sourceEpisode + " " + storySwapTitleLines(title, true) : storySwapTitleLines(title);
 }

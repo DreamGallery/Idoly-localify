@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 from pipeline import Pipeline
 from font_policy import required_patch_mode
-from story_catalog_payloads import CATALOG_NAMES, CATALOG_LIMIT, validate_catalog
+from story_catalog_payloads import CATALOG_NAMES, LEGACY_CATALOG_NAMES, CATALOG_LIMIT, validate_catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -279,11 +279,14 @@ def build(root: Path, output: Path, base_url: str, version: str | None = None,
     if catalog_sources:
         # Older plugins ignore this optional section and continue to consume
         # the unchanged text ZIP. New plugins commit these files with the text.
-        manifest["story_catalogs"] = {
+        catalog_entries = {
             name: {"sha256": digest, "url": (
                 f"https://github.com/{github_repository}/releases/download/text-{version}/{name}"
                 if github_repository else f"{base_url}/objects/{digest}/{name}")}
             for name, (_, digest, _) in catalog_sources.items()}
+        manifest["story_catalogs"] = {name: catalog_entries[name] for name in LEGACY_CATALOG_NAMES}
+        manifest["additional_story_catalogs"] = {
+            name: entry for name, entry in catalog_entries.items() if name not in LEGACY_CATALOG_NAMES}
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if len(manifest_bytes) > MAX_MANIFEST:
         raise ValueError("manifest exceeds the app download limit")

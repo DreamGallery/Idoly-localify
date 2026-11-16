@@ -54,6 +54,7 @@ app/src/main/assets/idoly-localify/resource-han-rounded.bundle
 /app/src/main/assets/idoly-localify/card-stories.json
 /app/src/main/assets/idoly-localify/event-stories.json
 /app/src/main/assets/idoly-localify/love-stories.json
+/app/src/main/assets/idoly-localify/bond-stories.json
 
 # Local environment, downloaded resources and private diagnostics.
 .venv/

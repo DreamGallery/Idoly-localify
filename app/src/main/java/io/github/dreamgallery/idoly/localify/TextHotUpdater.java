@@ -207,11 +207,9 @@ final class TextHotUpdater {
         // Keep the schema-2 ZIP unchanged for older plugins. Catalog sidecars
         // share hashes, staging, rollback and the installed text version.
         List<Item> archiveItems = new ArrayList<>(items);
-        if (manifest.has("story_catalogs")) {
-            JSONObject catalogs = manifest.getJSONObject("story_catalogs");
-            if (catalogs.length() != StoryCatalog.NAMES.length)
-                throw new IllegalArgumentException("更新清单必须同时包含三类剧情目录");
-            for (String name : StoryCatalog.NAMES) {
+        JSONObject catalogs = StoryCatalog.updates(manifest);
+        for (String name : StoryCatalog.NAMES) {
+            if (catalogs.has(name)) {
                 JSONObject entry = catalogs.getJSONObject(name);
                 String hash = entry.getString("sha256").toLowerCase(Locale.ROOT);
                 if (!hash.matches("[0-9a-f]{64}"))

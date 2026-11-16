@@ -30,6 +30,7 @@ from font_policy import DEFAULT_FONT_MODE
 import build_story_titles
 import card_display_aliases
 import story_card_catalog
+import story_bond_catalog
 import story_event_catalog
 import localize
 import master_json
@@ -329,7 +330,9 @@ class Pipeline:
         static_inputs = required + [self.glossary, Path(toolkit.__file__),
                                     self.web_notice_title_resolutions,
                                     self.root / "translations/story-metadata/love-group-names.json",
-                                    Path(card_display_aliases.__file__)]
+                                    Path(card_display_aliases.__file__),
+                                    Path(story_card_catalog.__file__), Path(story_event_catalog.__file__),
+                                    Path(story_bond_catalog.__file__)]
         legal_workflow = None
         if self.legal_source.exists():
             legal_workflow = load_module("Hoshimi_Teleprompter", "src.legal_workflow")
@@ -345,7 +348,8 @@ class Pipeline:
                            self.web_notice_dictionary, self.legal_runtime,
                            self.root / "app/src/main/assets/idoly-localify/card-stories.json",
                            self.root / "app/src/main/assets/idoly-localify/event-stories.json",
-                           self.root / "app/src/main/assets/idoly-localify/love-stories.json")
+                           self.root / "app/src/main/assets/idoly-localify/love-stories.json",
+                           self.root / "app/src/main/assets/idoly-localify/bond-stories.json")
         published_snapshot = {path: digest(path) for path in published_paths}
         previous = json_file(self.manifest)
         if previous and previous.get("version") not in (1, VERSION):
@@ -417,6 +421,8 @@ class Pipeline:
                 self.root / "translations/master/zh-Hans", master_keyed_path)
             card_catalog_path = stage / "card-stories.json"
             card_catalog_path.write_bytes(story_card_catalog.build(self.root))
+            bond_catalog_path = stage / "bond-stories.json"
+            bond_catalog_path.write_bytes(story_bond_catalog.build(self.root))
             event_catalogs = []
             for kind in ("event", "love"):
                 path = stage / f"{kind}-stories.json"
@@ -479,7 +485,8 @@ class Pipeline:
                          (master_keyed_path, self.master_keyed),
                          (dict_path, self.dictionary),
                          (web_notice_path, self.web_notice_dictionary),
-                         (card_catalog_path, self.root / "app/src/main/assets/idoly-localify/card-stories.json")]
+                         (card_catalog_path, self.root / "app/src/main/assets/idoly-localify/card-stories.json"),
+                         (bond_catalog_path, self.root / "app/src/main/assets/idoly-localify/bond-stories.json")]
             artifacts.extend(event_catalogs)
             if legal_path is not None:
                 artifacts.append((legal_path, self.legal_runtime))

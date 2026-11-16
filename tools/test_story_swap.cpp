@@ -40,6 +40,33 @@ int main(int argc, char** argv) {
     write("broken");
     assert(storySwapSource(path, entry) == entry);
 
+    // Bond aliases retain their own state and never create implicit short forms.
+    write(R"({"schema_version":2,"entry":"adv_bond_ai_01_01.txt","source":"adv_bond_szk_01_02.txt","entry_title":"入口","source_title":"源","entry_episode":1,"source_episode":2})");
+    const auto bond = storySwapRead(path, "bond");
+    assert(bond.resolve(bond.entry) == "adv_bond_szk_01_02.txt");
+    assert(storySwapRead(path).entry.empty() && storySwapRead(path, "event").entry.empty());
+    assert(bond.resolve("adv_bond_ai_01_01_short.txt") == "adv_bond_ai_01_01_short.txt");
+    assert(storySwapKind("adv_bond_ai_01_01.txt") == "bond");
+    assert(storySwapKind("adv_bond_ai_01_01_short.txt").empty());
+    const std::string bondScript = "[title title=小美山爱 episode 1 入口]\n[timeline]";
+    const std::string bondSource = "[title title=兵藤雫 第2话 人工修订]\n[timeline]";
+    assert(storySwapPairCompatible(bondScript, bondSource, "bond"));
+    assert(!storySwapScriptCompatible("[title]\n[choicegroup]\n[timeline]", "bond"));
+    assert(!storySwapScriptCompatible("[title]\n[branchgroup]\n[timeline]", "bond"));
+    assert(!storySwapScriptCompatible("[title]\n[message text=truncated]", "bond"));
+    const auto bondTitles = storySwapPlaybackTitles(bond, bond.entry, bond.source, bondScript, bondSource);
+    assert(bondTitles.ready() && !bondTitles.catalogOnly);
+    assert(bondTitles.entry.character == "小美山爱" && bondTitles.source.character == "兵藤雫");
+    assert(bondTitles.sourceCatalogTitle == "人工修订");
+    assert((StorySwapPlaybackAssets{bond.entry, bond.source}.castAsset("bond_ai_01_01") == "bond_szk_01_02"));
+    assert(storySwapScriptTitle("[title title=兵藤雫 第2話 題名]").episode == "第2话");
+    assert(storySwapScriptTitle("[title title=kana 第8集 烦得睡不着啊]").episode == "第8话");
+    assert(storySwapScriptTitle("[title title=白石沙季 第1集 全校集会]").title == "全校集会");
+    assert(storySwapScriptTitle("[title title=兵藤雫 episode x 題名]").title.empty());
+    assert(storySwapScriptTitle("[title title=兵藤雫 episode 21 題名]").title.empty());
+    write(R"({"schema_version":1,"entry":"adv_bond_ai_01_01.txt","source":"adv_card_ai_01_01.txt"})");
+    assert(storySwapRead(path, "bond").entry.empty());
+
     // Each category reads only its own state, never crosses ADV dialects.
     write(R"({"schema_version":2,"entry":"adv_event_2107_01_01.txt","source":"adv_event_2108_01_01.txt","entry_title":"入口","source_title":"源","entry_episode":1,"source_episode":1})");
     assert(storySwapRead(path).entry.empty());
@@ -86,6 +113,35 @@ int main(int argc, char** argv) {
     assert(storySwapTitleReplacement(loveTitles, header, "无关标题").empty());
     const std::string small = root + "ScreenCanvas/ScreenRoot/Header/SmallTitle";
     const std::string loading = root + "StoryFullScreenLoading/Root/Layout/";
+    // Bond replays use the same player beneath CompanyWindow, with English
+    // episode labels. Keep matching scoped to that player and the exact entry.
+    const std::string company = "WindowSystem/WindowRoot/CompanyWindow(Clone)/StoryPlayerScreen(Clone)/";
+    const std::string bondHeader = company + "ScreenCanvas/ScreenRoot/Header/Title";
+    const std::string bondLoading = company + "StoryFullScreenLoading/Root/Layout/";
+    assert(storySwapTitleReplacement(bondTitles, bondHeader, "episode 1 入口") == "episode 2 人工修订");
+    assert(storySwapTitleReplacement(bondTitles, bondHeader, "第1话 入口") == "第2话 人工修订");
+    assert(storySwapTitleReplacement(bondTitles, bondLoading + "EpisodeText", "episode 1") == "episode 2");
+    assert(storySwapTitleReplacement(bondTitles, bondLoading + "Title", "入口") == "人工修订");
+    assert(storySwapTitleReplacement(bondTitles, bondLoading + "SmallTitle", "小美山爱") == "兵藤雫");
+    assert(storySwapTitleReplacement(bondTitles, bondHeader, "episode 10 入口").empty());
+    assert(storySwapTitleReplacement(bondTitles, bondHeader, "episode 1 无关标题").empty());
+    assert(storySwapTitleReplacement(bondTitles, bondLoading + "EpisodeText", "episode 10").empty());
+    assert(storySwapTitleReplacement(bondTitles, "Other/" + bondHeader, "episode 1 入口").empty());
+    assert(storySwapTitleReplacement(bondTitles,
+        "WindowSystem/WindowRoot/CompanyWindow(Clone)/CompanyEnjoyMemoryScreen(Clone)/ScreenCanvas/ScreenRoot/Header/Title",
+        "episode 1 入口").empty());
+    assert(storySwapTitleRole(bondLoading + "Title") == 4);
+    assert(storySwapTitleRole(company + "Profile/Title") == 0);
+
+    const StorySwapSelection kotonoBond{"adv_bond_ktn_01_01.txt", "adv_bond_ktn_01_08.txt",
+        "晚安", "明明\n想让你\n看星星", 1, 8};
+    const auto kotonoTitles = storySwapPlaybackTitles(kotonoBond, kotonoBond.entry, kotonoBond.source,
+        "[title title=长濑琴乃 episode 1 晚安]\n[timeline]",
+        "[title title=长濑琴乃 episode 8 明明想让你看星星]\n[timeline]");
+    assert(storySwapTitleReplacement(kotonoTitles, bondHeader, "episode 1 晚安") == "episode 8 明明想让你看星星");
+    assert(storySwapTitleReplacement(kotonoTitles, bondLoading + "EpisodeText", "episode 1") == "episode 8");
+    assert(storySwapTitleReplacement(kotonoTitles, bondLoading + "Title", "晚安") == "明明\n想让你\n看星星");
+
     // The cast lookup follows only the asset whose replacement was delivered.
     const StorySwapPlaybackAssets cast{"adv_card_ktn_01_01.txt", "adv_card_ngs_15_01.txt"};
     assert(cast.castAsset("card_ktn_01_01") == "card_ngs_15_01");

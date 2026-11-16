@@ -34,6 +34,10 @@ struct Il2CppByteArray {
     alignas(8) uint8_t data[64 * sizeof(mixed_font_router::UnicodeChar)]{};
 };
 struct MethodInfoHead { int params; const char* first; const char* second; };
+const MethodInfoHead* tmpStringSetter(uint32_t count) {
+    static MethodInfoHead setter{2, "System.String", "System.Boolean"};
+    return count == 2 ? &setter : nullptr;
+}
 struct Label {
     std::string path = std::string(love_episode_label::path);
     Il2CppByteArray raw, rebuilt;
@@ -108,6 +112,9 @@ int32_t render(void* object, void* array, void*) {
     return 7;
 }
 auto origTmpUiSetArraySizes = render;
+bool measuringButtonLabel = false;
+bool preservesGameAnimatedText(void*) { return false; }
+struct StoryPunctuationScope { explicit StoryPunctuationScope(void*) {} };
 #define LOGI(...) ((void)0)
 #define LOGE(...) ((void)0)
 '''

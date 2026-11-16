@@ -38,6 +38,8 @@ final class StorySwap {
         CATALOG = kind.equals("card") ? "card-stories.json" : kind + "-stories.json";
     }
 
+    private boolean byCharacter() { return kind.equals("card") || kind.equals("bond"); }
+
     private final class StoryItem {
         final String file;
         final String title;
@@ -57,8 +59,8 @@ final class StorySwap {
             groupId = row.getString(kind.equals("card") ? "card_id" : "group_id");
             episode = row.getInt("episode");
             displayLabel = row.optString("display_label", "第" + episode + "话 · " + title);
-            String owner = kind.equals("card") ? row.optString("character_id", "").trim() : groupId;
-            String name = kind.equals("card") ? row.optString("character_name", "").trim() : groupName;
+            String owner = byCharacter() ? row.optString("character_id", "").trim() : groupId;
+            String name = byCharacter() ? row.optString("character_name", "").trim() : groupName;
             characterId = owner.isEmpty() || name.isEmpty() ? "" : owner;
             characterName = characterId.isEmpty() ? "未分类" : name;
             if (!validName(file) || episode < 1 || episode > 20) throw new Exception("剧情目录无效");
@@ -78,6 +80,9 @@ final class StorySwap {
     }
     static void showEvent(Activity activity, File dataDir) {
         new StorySwap("event", "普通活动").showMenu(activity, dataDir);
+    }
+    static void showBond(Activity activity, File dataDir) {
+        new StorySwap("bond", "羁绊").showMenu(activity, dataDir);
     }
     static void showSpecial(Activity activity, File dataDir) {
         new StorySwap("love", "特殊活动").showMenu(activity, dataDir);
@@ -191,8 +196,7 @@ final class StorySwap {
         Dialog dialog = new SettingsDialog(activity);
         android.content.Context context = dialog.getContext();
         Runnable back = () -> {
-            if (source == null) showMenu(activity, dataDir);
-            else pick(activity, dataDir, available, "选择想看的剧情", null);
+            if (source != null) pick(activity, dataDir, available, "选择想看的剧情", null);
             dialog.dismiss();
         };
         SettingsUiStyle.Page page = new SettingsUiStyle.Page(dialog,
@@ -211,7 +215,7 @@ final class StorySwap {
         }
         EditText search = PluginDialog.input(context);
         search.setSingleLine(true);
-        search.setHint("搜索" + category + "名、剧情名或文件名");
+        search.setHint(kind.equals("bond") ? "搜索角色、剧情名或文件名" : "搜索" + category + "名、剧情名或文件名");
         search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
         page.body.addView(search, new LinearLayout.LayoutParams(-1, -2));
         TextView count = SettingsUiStyle.text(context, "", 13, SettingsUiStyle.MUTED, false);
@@ -221,13 +225,13 @@ final class StorySwap {
         filters.setPadding(0, SettingsUiStyle.dp(context, 8), 0, SettingsUiStyle.dp(context, 8));
         filters.addView(count, new LinearLayout.LayoutParams(0, -2, 1));
         android.widget.Button characterFilter = SettingsUiStyle.button(context,
-            (kind.equals("card") ? "角色" : "活动") + "：全部 ▾", false, () -> {});
+            (byCharacter() ? "角色" : "活动") + "：全部 ▾", false, () -> {});
         filters.addView(characterFilter, new LinearLayout.LayoutParams(-2, -2));
         page.body.addView(filters);
         // null means all characters; an empty ID means the explicit unclassified group.
         String[] selectedCharacter = {null};
         CharacterGroups groups = CharacterGroups.load(activity);
-        java.util.Map<String, String> characters = kind.equals("card") ?
+        java.util.Map<String, String> characters = byCharacter() ?
             new java.util.TreeMap<>(groups::compare) : new java.util.TreeMap<>();
         for (StoryItem item : available) {
             if (source == null || !item.file.equals(source.file))
@@ -285,13 +289,13 @@ final class StorySwap {
                 ids.add(character.getKey());
                 labels.add(character.getValue() + (character.getKey().equals(selectedCharacter[0]) ?
                     " · 当前" : ""));
-                headings.add(kind.equals("card") ? groups.name(character.getKey(), "其他角色") : "");
+                headings.add(byCharacter() ? groups.name(character.getKey(), "其他角色") : "");
             }
-            new PluginDialog.Builder(activity).setTitle(kind.equals("card") ? "按角色筛选" : "按活动筛选")
+            new PluginDialog.Builder(activity).setTitle(byCharacter() ? "按角色筛选" : "按活动筛选")
                 .setItemGroups(headings.toArray(new String[0]))
                 .setItems(labels.toArray(new String[0]), (choice, index) -> {
                     selectedCharacter[0] = ids.get(index);
-                    characterFilter.setText((kind.equals("card") ? "角色：" : "活动：") + (index == 0 ? "全部" :
+                    characterFilter.setText((byCharacter() ? "角色：" : "活动：") + (index == 0 ? "全部" :
                         characters.get(selectedCharacter[0])) + " ▾");
                     filter.run();
                 }).setNegativeButton("取消", null).show();
@@ -366,7 +370,7 @@ final class StorySwap {
             }
         }
         if (result.isEmpty()) throw new Exception("未找到已安装的" + category + "剧情译文");
-        if (kind.equals("card")) {
+        if (byCharacter()) {
             CharacterGroups groups = CharacterGroups.load(context);
             result.sort((left, right) -> groups.compare(left.characterId, right.characterId));
         }
@@ -433,7 +437,7 @@ final class StorySwap {
             String script = new String(Files.readAllBytes(target.toPath()), StandardCharsets.UTF_8);
             return script.startsWith("[") && script.trim().endsWith("[timeline]") &&
                 script.indexOf('\0') < 0 &&
-                (!kind.equals("event") || (!script.contains("[choicegroup") && !script.contains("[branchgroup")));
+                (kind.equals("love") || (!script.contains("[choicegroup") && !script.contains("[branchgroup")));
         } catch (Exception error) { return false; }
     }
     private void requireInstalled(File dataDir, String file) throws Exception {

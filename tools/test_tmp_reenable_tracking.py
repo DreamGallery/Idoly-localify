@@ -49,6 +49,8 @@ void* invoke(const MethodInfoHead* m, void* object, void** args, void**) {
 }
 auto runtimeInvoke = invoke;
 void origTmpOnEnable(void*, void*) {}
+bool preservesGameAnimatedText(void*) { return false; }
+void preserveButtonMinimumWidth(void*, Il2CppString*) {}
 void registerTmpUi(void*) {}
 Il2CppString* translateText(void*, Il2CppString* text) {
     if (resolvingI18n == text) ++stylingOnly; else ++translatedCount;

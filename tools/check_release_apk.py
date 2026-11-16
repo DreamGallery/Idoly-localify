@@ -8,17 +8,32 @@ from zipfile import ZipFile
 
 from build_text_update import validate_json
 from check_runtime_images import read_directory, validate as validate_images
+from story_catalog_payloads import CATALOG_NAMES, validate_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = 'assets/idoly-localify/'
-PAYLOADS = {'dict.json', 'web-notice.json', 'card-stories.json',
-            'event-stories.json', 'love-stories.json', 'character-groups.json', 'resource-han-rounded.bundle',
-            'love-rounded.bundle'}
+PAYLOADS = {'dict.json', 'web-notice.json', 'character-groups.json',
+            'resource-han-rounded.bundle', 'love-rounded.bundle', *CATALOG_NAMES}
 # Removed ad-hoc probes must not return to a distributed native library.
 DIAGNOSTIC_MARKERS = (b'HomeTalk glyph diagnostic:', b'Message picker geometry:',
                       b'Constrained title route:', b'Constrained title geometry after:',
                       b'League glyph lookup font route:', b'TMP start label font route:',
                       b'Shop badge: game IsMarketNotify=', b'Activity submesh rect:')
+
+
+def validate_payloads(archive, image_names):
+    names = archive.namelist()
+    payloads = {name[len(ASSETS):] for name in names if name.startswith(ASSETS)}
+    expected = PAYLOADS | {'images/' + name for name in image_names}
+    if len(names) != len(set(names)):
+        raise ValueError('Duplicate APK entries')
+    if payloads != expected:
+        raise ValueError('Unexpected or missing module assets: '
+                         f'missing={sorted(expected - payloads)}, '
+                         f'unexpected={sorted(payloads - expected)}')
+    for name in CATALOG_NAMES:
+        validate_catalog(name, archive.read(ASSETS + name))
+    return names, payloads
 
 
 def check(apk, project=ROOT):
@@ -28,11 +43,7 @@ def check(apk, project=ROOT):
 
     images = read_directory(project / 'app/src/main/assets/idoly-localify/images')
     with ZipFile(apk) as archive:
-        names = archive.namelist()
-        payloads = {name[len(ASSETS):] for name in names if name.startswith(ASSETS)}
-        expected = PAYLOADS | {'images/' + name for name in images}
-        if payloads != expected or len(names) != len(set(names)):
-            raise ValueError('Unexpected or missing module assets')
+        names, payloads = validate_payloads(archive, images)
         if archive.read(ASSETS + 'character-groups.json') != (
                 project / 'app/src/main/assets/idoly-localify/character-groups.json').read_bytes():
             raise ValueError('Character group index differs from the reviewed source payload')

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 import build_text_update as release
-from story_catalog_payloads import CATALOG_NAMES, validate_catalog, release_catalog_assets
+from story_catalog_payloads import CATALOG_NAMES, LEGACY_CATALOG_NAMES, catalog_entries, validate_catalog, release_catalog_assets
 from release_followup import is_text
 from frozen_release import cache_assets, cached_assets
 
@@ -20,7 +20,7 @@ class StoryCatalogPayloadTests(unittest.TestCase):
                 group + '_id': 'test', group + '_name': '名称'}
 
     def test_rejects_cross_category_short_duplicates_and_invalid_fields(self):
-        for kind in ('card', 'event', 'love'):
+        for kind in ('card', 'event', 'love', 'bond'):
             name = kind + '-stories.json'
             row = self.row(kind)
             value = {'schema_version': 1, 'stories': [row]}
@@ -59,7 +59,9 @@ class StoryCatalogPayloadTests(unittest.TestCase):
                 first = release.build(root, output, 'https://example.org', include_stories=True,
                                       github_repository='owner/repo')
                 archive = (output / 'text-update.zip').read_bytes()
-                self.assertEqual(set(first['story_catalogs']), set(CATALOG_NAMES))
+                self.assertEqual(set(first['story_catalogs']), set(LEGACY_CATALOG_NAMES))
+                self.assertEqual(set(first['additional_story_catalogs']), {'bond-stories.json'})
+                self.assertEqual(set(catalog_entries(first)), set(CATALOG_NAMES))
                 with ZipFile(output / 'text-update.zip') as package:
                     self.assertEqual(set(package.namelist()), set(first['files']))
                     self.assertFalse(set(package.namelist()) & set(CATALOG_NAMES))
@@ -85,9 +87,21 @@ class StoryCatalogPayloadTests(unittest.TestCase):
             return {'tag_name': 'text-' + 'a' * 16, 'assets': [{'name': n} for n in names]}
         base = ['manifest.json', 'text-update.zip']
         self.assertTrue(is_text(record(base)))
+        self.assertTrue(is_text(record(base + list(LEGACY_CATALOG_NAMES))))
         self.assertTrue(is_text(record(base + list(CATALOG_NAMES))))
         self.assertFalse(is_text(record(base + ['card-stories.json'])))
         self.assertFalse(is_text(record(base + ['other.json'])))
+
+    def test_legacy_manifests_and_invalid_extension_shapes(self):
+        legacy = {name: {} for name in LEGACY_CATALOG_NAMES}
+        self.assertEqual(catalog_entries({}), {})
+        self.assertEqual(catalog_entries({'story_catalogs': legacy}), legacy)
+        for value in ({'story_catalogs': {**legacy, 'bond-stories.json': {}}},
+                      {'additional_story_catalogs': {'bond-stories.json': {}}},
+                      {'story_catalogs': legacy, 'additional_story_catalogs': {}},
+                      {'story_catalogs': legacy, 'additional_story_catalogs': {'unknown.json': {}}}):
+            with self.assertRaises(ValueError):
+                catalog_entries(value)
 
 
 if __name__ == '__main__':

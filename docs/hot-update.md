@@ -61,9 +61,9 @@ https://github.com/DreamGallery/Idoly-localify-translations/releases/latest/down
 
 所有条目通过检查后才事务替换有变化的本地文件；拒绝重复、多余、缺失条目、非法路径、超限及校验失败。未列入清单的本地文件保留。备份与恢复记录支持更新过程中进程退出后的恢复。
 
-包含剧情的发布还提供 `card-stories.json`、`event-stories.json`、`love-stories.json`。清单的可选 `story_catalogs` 对象以这三个文件名为键，每项包含绝对 HTTPS `url` 和 `sha256`，GitHub 地址固定到同一次文本发布。目录独立于 ZIP 下载，与文本一起校验、提交和回滚；三类目录必须齐全，每份最大 1 MiB。旧插件忽略这一可选字段，继续使用原文本包。
+包含剧情的发布还提供 `card-stories.json`、`event-stories.json`、`love-stories.json` 和 `bond-stories.json`。清单的 `story_catalogs` 对象保留前三个文件，羁绊目录放在可选的 `additional_story_catalogs` 对象中，兼容仅支持三类目录的旧插件。每项包含绝对 HTTPS `url` 和 `sha256`，GitHub 地址固定到同一次文本发布。目录独立于 ZIP 下载，与文本一起校验、提交和回滚，每份最大 1 MiB；三个基础目录必须齐全。
 
-剧情替换优先读取下载的目录，没有本地目录时使用插件内置目录。更新后重新打开替换列表即可看到已下载脚本对应的新卡牌和活动，无需重新打包插件。短版脚本不列入替换选择，普通活动仍排除不兼容的选项结构，特殊活动仍要求入口与播放脚本的选项数量一致。
+剧情替换优先读取下载的目录，没有本地目录时使用插件内置目录。更新后重新打开替换列表即可看到已下载脚本对应的新卡牌、羁绊和活动，无需重新打包插件。短版脚本不列入替换选择；羁绊和普通活动排除带选项分支的脚本，特殊活动要求入口与播放脚本的选项数量一致。
 
 升级插件时会保留已下载或手动修改的字典。若新字典仅需改变启动时配置（例如诊断开关或字体模式），原生层完整校验后允许保存更新，并提示重启游戏；当前进程的字典和配置保持不变。格式或内容无效仍拒绝更新，原生模块尚未就绪则单独提示，不将这两种情况混为配置不兼容。
 
@@ -85,4 +85,4 @@ python3 tools/build_text_update.py --base-url https://example.org/idoly \
 
 ### 限制
 
-清单最大 4 MiB、最多 8192 个文本文件；字典 64 MiB、公告词典 32 MiB、MasterDB 补丁 256 MiB、单个剧情 8 MiB。压缩包下载及总解压量各最多 1 GiB。`files` 仅允许 `dict.json`、`web-notice.json`、`master-blobs.bin` 和 `resource/adv_*.txt`；三类剧情目录仅由 `story_catalogs` 提供。
+清单最大 4 MiB、最多 8192 个文本文件；字典 64 MiB、公告词典 32 MiB、MasterDB 补丁 256 MiB、单个剧情 8 MiB。压缩包下载及总解压量各最多 1 GiB。`files` 仅允许 `dict.json`、`web-notice.json`、`master-blobs.bin` 和 `resource/adv_*.txt`；剧情目录仅由 `story_catalogs` 和 `additional_story_catalogs` 提供。

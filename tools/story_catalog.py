@@ -119,6 +119,8 @@ def build_catalog(master_dir: Path) -> dict:
         for episode in character.get("companyEnjoyStories", []):
             reference(episode["storyId"], "company", {
                 "table": "Character", "character_id": character["id"],
+                "character_code": character.get("assetId", ""),
+                "character_name": character.get("name", ""),
                 "episode": episode["number"], "asset_id": episode.get("assetId", ""),
             })
 

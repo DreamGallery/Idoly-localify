@@ -77,14 +77,15 @@ class LatestReleaseTests(unittest.TestCase):
         self.assertTrue(all(op[0] == 'GET' for op in self.client.operations))
 
     def test_catalogs_must_be_verified_before_latest_moves(self):
-        from story_catalog_payloads import CATALOG_NAMES
+        from story_catalog_payloads import CATALOG_NAMES, LEGACY_CATALOG_NAMES
         catalogs = {}
         for name in CATALOG_NAMES:
             path = self.output / name
             path.write_text(json.dumps({'schema_version': 1, 'stories': []}))
             catalogs[name] = {'sha256': latest.sha256(path), 'url':
                 f'https://github.com/{self.client.repository}/releases/download/{self.tag}/{name}'}
-        self.manifest['story_catalogs'] = catalogs
+        self.manifest['story_catalogs'] = {name: catalogs[name] for name in LEGACY_CATALOG_NAMES}
+        self.manifest['additional_story_catalogs'] = {'bond-stories.json': catalogs['bond-stories.json']}
         (self.output / 'manifest.json').write_text(json.dumps(self.manifest))
         self.client = FakeReleases(self.output, self.tag)
         with self.assertRaisesRegex(ValueError, 'not complete'):

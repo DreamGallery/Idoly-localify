@@ -193,6 +193,7 @@ final class LocalifyOverlayUi {
             LocalifySettingsUi.show(activity, () -> runUpdate(activity, true),
                 () -> editManifestUrl(activity), () -> FontProfileEditor.show(activity, dataDir),
                 () -> hide(activity), () -> StorySwap.show(activity, dataDir),
+                () -> StorySwap.showBond(activity, dataDir),
                 () -> StorySwap.showEvent(activity, dataDir),
                 () -> StorySwap.showSpecial(activity, dataDir), capturing, dataDir);
         }));

@@ -31,6 +31,7 @@ class StoryCatalogTests(unittest.TestCase):
                 "character_id": "char-ai", "character_code": "ai", "character_name": "小美山愛"})
             self.assertEqual(catalog["stories"]["st-company"]["references"], [{
                 "category": "company", "table": "Character", "character_id": "char-ai",
+                "character_code": "ai", "character_name": "小美山愛",
                 "episode": 4, "asset_id": "04"}])
             self.assertEqual(catalog["stories"]["st-unreferenced"]["categories"], [])
             self.assertEqual(catalog["assets"]["card-01"], ["st-card"])

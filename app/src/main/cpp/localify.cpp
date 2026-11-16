@@ -29,6 +29,7 @@
 #include "runtime/photo_experiments.h"
 #include "runtime/graphics_settings.h"
 #include "runtime/frame_dispatch.h"
+#include "runtime/game_animated_text.h"
 #include "runtime/account_snapshot.h"
 #include "runtime/server_route.h"
 #include "button_minimum_layout.h"
@@ -335,6 +336,7 @@ void refreshProfileMaterials();
 void* findClass(const char* imageName, const char* nameSpace, const char* className);
 void* readFontProperty(void* object, const char* assembly, const char* ns, const char* type, const char* name);
 bool unityObjectAlive(void* object);
+bool preservesGameAnimatedText(void* object);
 FontVerticalMetrics verticalMetrics(void* font);
 // Registered only from the TextMeshProUGUI lifecycle hooks. All access is on
 // Unity's rendering thread; weak handles never retain retired scene labels.
@@ -434,6 +436,16 @@ std::string textObjectPath(void* object) {
         transform = runtimeInvoke(getParent, transform, nullptr, &error);
     }
     return result;
+}
+
+bool preservesGameAnimatedText(void* object) {
+    if (!object || !runtimeInvoke) return false;
+    static const auto getName = methodInfo("UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name", 0);
+    if (!getName) return false;
+    void* error = nullptr;
+    auto* name = static_cast<Il2CppString*>(runtimeInvoke(getName, object, nullptr, &error));
+    return !error && game_animated_text::preservesOriginal(utf8(name),
+        [&] { return textObjectPath(object); });
 }
 
 void dump(const char* kind, const std::string& source, const std::string& key = {}, void* textObject = nullptr) {
@@ -974,6 +986,10 @@ void refreshTranslatedText(void* self) {
 }
 
 void hookTmpSetText(void* self, Il2CppString* value, void* method) {
+    if (preservesGameAnimatedText(self)) {
+        origTmpSetText(self, value, method);
+        return;
+    }
     preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
@@ -984,6 +1000,10 @@ void hookTmpSetText(void* self, Il2CppString* value, void* method) {
 }
 
 void hookTmpSetTextOne(void* self, Il2CppString* value, void* method) {
+    if (preservesGameAnimatedText(self)) {
+        origTmpSetTextOne(self, value, method);
+        return;
+    }
     preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
@@ -994,6 +1014,10 @@ void hookTmpSetTextOne(void* self, Il2CppString* value, void* method) {
 }
 
 void hookTmpSetTextTwo(void* self, Il2CppString* value, bool syncInput, void* method) {
+    if (preservesGameAnimatedText(self)) {
+        origTmpSetTextTwo(self, value, syncInput, method);
+        return;
+    }
     preserveButtonMinimumWidth(self, value);
     auto* translated = applyStorySwapTitle(self, translateText(self, value));
     rememberTranslatedText(self, value, translated);
@@ -1033,7 +1057,8 @@ void refreshCanvasText() {
             const bool needsText = textChanged && tracked != trackedTexts.end() &&
                 tracked->second.generation != textGeneration;
             const bool needsFont = fontChanged && fontBaselines.find(target) != fontBaselines.end();
-            if (needsText || needsFont || captureChanged || storyChanged) canvasDirtyQueue.push_back(target);
+            if ((needsText || needsFont || captureChanged || storyChanged) &&
+                !preservesGameAnimatedText(target)) canvasDirtyQueue.push_back(target);
             ++it;
         }
         canvasStorySwapGeneration = storyGeneration;
@@ -1054,7 +1079,7 @@ void refreshCanvasText() {
             ++processed;
             const auto it = registeredTmpUi.find(object);
             if (it == registeredTmpUi.end() || gcHandleGetTarget(it->second) != object ||
-                !isTmpUi(object)) continue;
+                !isTmpUi(object) || preservesGameAnimatedText(object)) continue;
             void* exception = nullptr;
             runtimeInvoke(dirty, object, nullptr, &exception);
             if (exception) LOGE("Cannot mark localized TMP label dirty");
@@ -1366,8 +1391,7 @@ void fitStoryOpeningTitle(void* self) {
     if (!self || !translations.options().fontEnabled || !replacesCjk() || !runtimeInvoke || !objectUnbox) return;
     auto* name = static_cast<Il2CppString*>(readFontProperty(self,
         "UnityEngine.CoreModule.dll", "UnityEngine", "Object", "get_name"));
-    if (utf8(name) != "Title" || textObjectPath(self) !=
-        "WindowSystem/WindowRoot/StoryWindow(Clone)/StoryPlayerScreen(Clone)/StoryFullScreenLoading/Root/Layout/Title") return;
+    if (utf8(name) != "Title" || storySwapTitleRole(textObjectPath(self)) != 4) return;
     const auto property = [&](const char* key) {
         return readFontProperty(self, "Unity.TextMeshPro.dll", "TMPro", "TMP_Text", key);
     };
@@ -1403,7 +1427,7 @@ void fitStoryOpeningTitle(void* self) {
     if (error) LOGE("Cannot fit story opening title");
 }
 
-void hookTmpPreRender(void* self, void* method) {
+void localizeTmpPreRender(void* self, void* method) {
     std::lock_guard<std::recursive_mutex> frameLock(translations.frameMutex());
     registerTmpUi(self);
     refreshTranslatedText(self);
@@ -1567,6 +1591,14 @@ void hookTmpPreRender(void* self, void* method) {
     synchronizeTmpRendererMaterial(self);
     captureTextLayout(self);
     synchronizeActivityNameSubmeshFrame(self);
+}
+
+void hookTmpPreRender(void* self, void* method) {
+    if (preservesGameAnimatedText(self)) {
+        origTmpPreRender(self, method);
+        return;
+    }
+    localizeTmpPreRender(self, method);
 }
 
 void hookLegacySetText(void* self, Il2CppString* value, void* method) {
@@ -1844,8 +1876,7 @@ bool hasTrackedRenderedText(void* self, Il2CppString* current) {
         utf8(current) == tracked->second.rendered;
 }
 
-void hookTmpOnEnable(void* self, void* method) {
-    origTmpOnEnable(self, method);
+void localizeTmpOnEnable(void* self) {
     registerTmpUi(self);
     if (!self || !runtimeInvoke) return;
     static const auto getText = methodInfo("Unity.TextMeshPro.dll", "TMPro", "TMP_Text",
@@ -1884,6 +1915,11 @@ void hookTmpOnEnable(void* self, void* method) {
         rememberTranslatedText(self, current, translated);
         LOGI("Localized serialized TMP text");
     }
+}
+
+void hookTmpOnEnable(void* self, void* method) {
+    origTmpOnEnable(self, method);
+    if (!preservesGameAnimatedText(self)) localizeTmpOnEnable(self);
 }
 
 bool tryAssetLoad(Il2CppString* assetName, void* onComplete) {
@@ -3485,7 +3521,8 @@ void* prepareFormattedUiGlyphs(void* self, void* array) {
 }
 
 int32_t hookTmpUiSetArraySizes(void* self, void* array, void* method) {
-    if (measuringButtonLabel) return origTmpUiSetArraySizes(self, array, method);
+    if (measuringButtonLabel || preservesGameAnimatedText(self))
+        return origTmpUiSetArraySizes(self, array, method);
     array = prepareLoveEpisodeGlyphs(self, array);
     array = prepareFormattedUiGlyphs(self, array);
     routeTmpFontBeforeGlyphLookup(self, array);
@@ -3494,6 +3531,7 @@ int32_t hookTmpUiSetArraySizes(void* self, void* array, void* method) {
     return result;
 }
 int32_t hookTmp3dSetArraySizes(void* self, void* array, void* method) {
+    if (preservesGameAnimatedText(self)) return origTmp3dSetArraySizes(self, array, method);
     routeTmpFontBeforeGlyphLookup(self, array);
     StoryPunctuationScope punctuation(self);
     const int32_t result = origTmp3dSetArraySizes(self, array, method);

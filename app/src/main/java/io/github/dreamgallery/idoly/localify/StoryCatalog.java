@@ -13,12 +13,35 @@ import java.util.Set;
 /** Bounded, data-only picker metadata supplied by the text update transaction. */
 final class StoryCatalog {
     static final int LIMIT = 1024 * 1024;
-    static final String[] NAMES = {"card-stories.json", "event-stories.json", "love-stories.json"};
+    static final String[] LEGACY_NAMES = {"card-stories.json", "event-stories.json", "love-stories.json"};
+    static final String[] NAMES = {"card-stories.json", "event-stories.json", "love-stories.json", "bond-stories.json"};
     interface BuiltIn { byte[] read(String name) throws Exception; }
 
     static boolean accepts(String name) {
         for (String candidate : NAMES) if (candidate.equals(name)) return true;
         return false;
+    }
+
+    static JSONObject updates(JSONObject manifest) throws Exception {
+        JSONObject result = new JSONObject();
+        if (manifest.has("story_catalogs")) {
+            JSONObject legacy = manifest.getJSONObject("story_catalogs");
+            if (legacy.length() != LEGACY_NAMES.length)
+                throw new IllegalArgumentException("更新清单的基础剧情目录不完整");
+            for (String name : LEGACY_NAMES) result.put(name, legacy.getJSONObject(name));
+        }
+        // Existing clients require exactly three story_catalogs. A separate
+        // optional section extends the picker without breaking their updates.
+        if (manifest.has("additional_story_catalogs")) {
+            JSONObject extra = manifest.getJSONObject("additional_story_catalogs");
+            if (!manifest.has("story_catalogs"))
+                throw new IllegalArgumentException("更新清单的扩展剧情目录无效");
+            // Ignore future categories instead of blocking ordinary text updates;
+            // only recognized files can enter the download transaction.
+            for (String name : NAMES)
+                if (!result.has(name) && extra.has(name)) result.put(name, extra.getJSONObject(name));
+        }
+        return result;
     }
 
     static JSONArray load(File directory, String name, BuiltIn bundled) throws Exception {
